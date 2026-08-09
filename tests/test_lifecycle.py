@@ -1,4 +1,4 @@
-"""Tests for pbg_emitters.lifecycle — the per-agent emitter registry.
+"""Tests for viva_emitters.lifecycle — the per-agent emitter registry.
 
 These exercise the framework-generic lifecycle utility with a duck-typed
 fake emitter (no heavy parquet deps required) and, where the [parquet]
@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import pytest
 
-from pbg_emitters import lifecycle
-from pbg_emitters.lifecycle import (
+from viva_emitters import lifecycle
+from viva_emitters.lifecycle import (
     clear_registry,
     finalize_emitter_for_agent,
     get_emitter,
@@ -92,11 +92,11 @@ def test_finalize_unregisters_even_when_close_raises():
 
 
 def test_module_level_exports_match_package_exports():
-    """``from pbg_emitters import finalize_emitter_for_agent`` works."""
-    import pbg_emitters
+    """``from viva_emitters import finalize_emitter_for_agent`` works."""
+    import viva_emitters
 
-    assert pbg_emitters.finalize_emitter_for_agent is finalize_emitter_for_agent
-    assert pbg_emitters.register_emitter is register_emitter
+    assert viva_emitters.finalize_emitter_for_agent is finalize_emitter_for_agent
+    assert viva_emitters.register_emitter is register_emitter
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +124,7 @@ def test_finalize_flushes_real_parquet_emitter(tmp_path, core):
     """
     import os
 
-    from pbg_emitters.parquet_emitter import ParquetEmitter
+    from viva_emitters.parquet_emitter import ParquetEmitter
 
     out_dir = str(tmp_path / "out")
     emitter = ParquetEmitter(

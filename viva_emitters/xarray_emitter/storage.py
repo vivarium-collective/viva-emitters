@@ -305,7 +305,7 @@ class VariableSpec:
         Called by: :py:meth:`.alloc_time`.
         """
         # TIME_UNITS was previously imported from ecoli.processes.metabolism;
-        # use "[s]" directly so pbg-emitters does not require vivarium-ecoli.
+        # use "[s]" directly so viva-emitters does not require vivarium-ecoli.
         assert isinstance(buf_size, int)
         return cls(
             partition=partition, var_name="",

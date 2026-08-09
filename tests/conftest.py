@@ -1,4 +1,4 @@
-"""Shared fixtures for pbg-emitters tests."""
+"""Shared fixtures for viva-emitters tests."""
 
 import pytest
 
@@ -17,7 +17,7 @@ def core():
 
 @pytest.fixture
 def minimal_xarray_config(tmp_path):
-    """A minimum-valid config dict for pbg_emitters.xarray_emitter.XArrayEmitter.
+    """A minimum-valid config dict for viva_emitters.xarray_emitter.XArrayEmitter.
 
     Sufficient to build XarrayTransducer / ForestView / AsyncBufferWriter
     without raising. Used by tests that don't care about specific transducer

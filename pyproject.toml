@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pbg-emitters"
+name = "viva-emitters"
 version = "0.2.1"
 description = "Focused emitter library for process-bigraph composites — SQLite, Parquet, and beyond"
 readme = "README.md"
@@ -17,7 +17,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # SQLite uses Python's stdlib ``sqlite3`` — the group exists for symmetry
-# with the other extras so callers can write ``pip install pbg-emitters[sqlite]``.
+# with the other extras so callers can write ``pip install viva-emitters[sqlite]``.
 sqlite = []
 parquet = [
     "duckdb",
@@ -48,4 +48,4 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["pbg_emitters*"]
+include = ["viva_emitters*"]

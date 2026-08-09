@@ -847,7 +847,7 @@ class AsyncZarrBufferWriter(AsyncBufferWriter[ZarrStore]):
                 # find direct children in the Zarr hierarchy (fresh listing)
                 self.store._members = self.store._fetch_members()
                 if append_dim is None or append_dim in self.store.get_dimensions():
-                    if attempt and os.environ.get("PBG_EMITTERS_DEBUG_APPEND_DIM"):
+                    if attempt and os.environ.get("VIVA_EMITTERS_DEBUG_APPEND_DIM"):
                         print(
                             f"[xarray_emitter] append dim {append_dim!r} became "
                             f"visible after {attempt + 1} member re-fetch(es)",

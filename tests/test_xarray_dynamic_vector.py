@@ -154,7 +154,7 @@ def _inject_emitter_as_step(composite, core, config, address):
 
 
 def _base_config(store, emit_ports, *, coords=None, output_metadata=None):
-    from pbg_emitters.xarray_emitter.view import view_from_emit_paths
+    from viva_emitters.xarray_emitter.view import view_from_emit_paths
 
     return {
         "out_uri": store,
@@ -203,7 +203,7 @@ def test_generic_path_scalar_plus_vector(tmp_path):
     core = allocate_core()
     core.register_link("Counter", Counter)
     core.register_link("VecProcess", VecProcess)
-    from pbg_emitters.xarray_emitter import XArrayEmitter
+    from viva_emitters.xarray_emitter import XArrayEmitter
 
     core.register_link("XArrayEmitter", XArrayEmitter)
 
@@ -281,7 +281,7 @@ def test_generic_path_2d_port_dropped_with_warning(tmp_path):
     core = allocate_core()
     core.register_link("Counter", Counter)
     core.register_link("MatrixProcess", MatrixProcess)
-    from pbg_emitters.xarray_emitter import XArrayEmitter
+    from viva_emitters.xarray_emitter import XArrayEmitter
 
     core.register_link("XArrayEmitter", XArrayEmitter)
 
@@ -348,7 +348,7 @@ def test_generic_path_string_scalar_dropped_no_crash(tmp_path):
     core = allocate_core()
     core.register_link("Counter", Counter)
     core.register_link("StringProcess", StringProcess)
-    from pbg_emitters.xarray_emitter import XArrayEmitter
+    from viva_emitters.xarray_emitter import XArrayEmitter
 
     core.register_link("XArrayEmitter", XArrayEmitter)
 
@@ -408,7 +408,7 @@ def test_promoted_vector_length_change_dropped_no_crash(tmp_path):
     direct write. Exercises routing promoted ports back through _write_dynamic."""
     core = allocate_core()
     core.register_link("GrowingVecProcess", GrowingVecProcess)
-    from pbg_emitters.xarray_emitter import XArrayEmitter
+    from viva_emitters.xarray_emitter import XArrayEmitter
 
     core.register_link("XArrayEmitter", XArrayEmitter)
 
@@ -452,7 +452,7 @@ def test_caller_coord_vector_still_works(tmp_path):
     """
     core = allocate_core()
     core.register_link("VecProcess", VecProcess)
-    from pbg_emitters.xarray_emitter import XArrayEmitter
+    from viva_emitters.xarray_emitter import XArrayEmitter
 
     core.register_link("XArrayEmitter", XArrayEmitter)
 
@@ -520,10 +520,10 @@ def test_late_scalar_to_vector_promotion_warns():
     (b) a warning is raised whose text names the port (``lv_store/v``) and
         mentions discarded / earlier samples.
     """
-    from pbg_emitters.xarray_emitter.transducer import XarrayBuffer
-    from pbg_emitters.xarray_emitter.view import ForestView, view_from_emit_paths
-    from pbg_emitters.xarray_emitter.storage import XarrayStoragePartition
-    from pbg_emitters.xarray_emitter._base import StoragePartition
+    from viva_emitters.xarray_emitter.transducer import XarrayBuffer
+    from viva_emitters.xarray_emitter.view import ForestView, view_from_emit_paths
+    from viva_emitters.xarray_emitter.storage import XarrayStoragePartition
+    from viva_emitters.xarray_emitter._base import StoragePartition
 
     emit_ports = ["lv_store/v"]
     view_config = view_from_emit_paths(emit_ports, dtype="<f8")

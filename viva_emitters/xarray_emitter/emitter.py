@@ -46,7 +46,7 @@ class XArrayEmitter(BufferedEmitter):
 
     @classmethod
     def emitter_contract(cls):
-        from pbg_emitters.contract import EmitterContract
+        from viva_emitters.contract import EmitterContract
         return EmitterContract(output_kind="zarr", output_uri_config_key="out_uri")
 
     def __init__(self, config: dict[str, Any], core: Any) -> None:

@@ -1,18 +1,18 @@
-"""pbg-emitters: focused emitter library for process-bigraph composites.
+"""viva-emitters: focused emitter library for process-bigraph composites.
 
 Each emitter lives behind its own optional-extras group; importing the
 package never forces the heavy dependencies. Install only what you need::
 
-    pip install 'pbg-emitters[sqlite]'    # SQLiteEmitter (stdlib only)
-    pip install 'pbg-emitters[parquet]'   # ParquetEmitter (duckdb, polars, ...)
+    pip install 'viva-emitters[sqlite]'    # SQLiteEmitter (stdlib only)
+    pip install 'viva-emitters[parquet]'   # ParquetEmitter (duckdb, polars, ...)
 """
 
 # Per-agent emitter-lifecycle registry. Pure stdlib (no heavy deps), so it
 # imports unconditionally regardless of which emitter extras are installed.
-from pbg_emitters.contract import EmitterContract
-from pbg_emitters.contracts import contract_for, register_contract
+from viva_emitters.contract import EmitterContract
+from viva_emitters.contracts import contract_for, register_contract
 
-from pbg_emitters.lifecycle import (
+from viva_emitters.lifecycle import (
     register_emitter,
     get_emitter,
     unregister_emitter,
@@ -22,7 +22,7 @@ from pbg_emitters.lifecycle import (
 )
 
 try:
-    from pbg_emitters.sqlite_emitter import (
+    from viva_emitters.sqlite_emitter import (
         SQLiteEmitter,
         save_simulation_metadata,
         mark_simulation_finished,
@@ -34,7 +34,7 @@ except ImportError:
     pass  # [sqlite] extra not installed
 
 try:
-    from pbg_emitters.parquet_emitter import (
+    from viva_emitters.parquet_emitter import (
         ParquetEmitter,
         # Bare DuckDB / parquet reader helpers re-exported for downstream readers:
         BlockingExecutor,
@@ -66,7 +66,7 @@ except ImportError:
     pass  # [parquet] extra not installed
 
 try:
-    from pbg_emitters.xarray_emitter import XArrayEmitter  # noqa: F401
+    from viva_emitters.xarray_emitter import XArrayEmitter  # noqa: F401
 except (ImportError, SyntaxError):
     # ImportError: [xarray] extra not installed.
     # SyntaxError: the backend uses 3.12+ syntax and this is an older interpreter
@@ -74,7 +74,7 @@ except (ImportError, SyntaxError):
     pass
 
 try:
-    from pbg_emitters.run_reader import (  # noqa: F401
+    from viva_emitters.run_reader import (  # noqa: F401
         RunReader,
         RunRef,
         by_generation,

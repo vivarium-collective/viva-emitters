@@ -2,20 +2,20 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development / executing-plans. Steps use `- [ ]` checkboxes.
 
-**Goal:** A single emitter-agnostic `RunReader` in `pbg-emitters` that, given a stored run (parquet / sqlite / xarray-zarr), returns a uniform per-tick **series** for any observable, tagged with **generation** and **time** — the foundation the study-outcome evaluator (Increment B2) reads from.
+**Goal:** A single emitter-agnostic `RunReader` in `viva-emitters` that, given a stored run (parquet / sqlite / xarray-zarr), returns a uniform per-tick **series** for any observable, tagged with **generation** and **time** — the foundation the study-outcome evaluator (Increment B2) reads from.
 
 **Architecture:** One class `RunReader` wrapping the existing per-backend read primitives (`dataset_sql`/`read_stacked_columns`, `load_history`/raw sqlite, `xr.open_datatree`+`ForestView`). It normalizes all three into a polars DataFrame with columns `["generation", "time", "value"]`. Generation structure is first-class in every backend (parquet `generation` column; sqlite `generation` in state + per-gen `simulation_id`; zarr `emitstep_gen=N`/`time_gen=N` coords) — the reader surfaces it, never infers it. NB: `global_time` is **gen-local** (resets each generation); the reader returns gen-local `time` plus an absolute `abs_time` (cumulative).
 
-**Tech Stack:** Python 3.11+, polars, duckdb, sqlite3 (stdlib), xarray+zarr, numpy; pytest. Backed by the grounding in the program memory + spec `docs/specs/2026-06-09-study-run-outcome-spine-design.md` (in pbg-superpowers).
+**Tech Stack:** Python 3.11+, polars, duckdb, sqlite3 (stdlib), xarray+zarr, numpy; pytest. Backed by the grounding in the program memory + spec `docs/specs/2026-06-09-study-run-outcome-spine-design.md` (in viva-superpowers).
 
-**Repo:** `pbg-emitters` only.
+**Repo:** `viva-emitters` only.
 
 ---
 
 ## Contract (the shape every backend normalizes to)
 
 ```python
-# pbg_emitters/run_reader.py
+# viva_emitters/run_reader.py
 @dataclass
 class RunRef:
     store: str            # path to the run's store (hive dir | .db | .zarr/datatree root)
@@ -36,15 +36,15 @@ class RunReader:
 `observable` ids are the backend-native names the reader also lists from `observables()` (parquet flattened column e.g. `listeners__mass__cell_mass`; sqlite/xarray dotted state path e.g. `listeners.mass.cell_mass`). The reader accepts the dotted form and maps it to the backend's native key. **Arithmetic expressions over observables are NOT B1's job** — the evaluator (B2) composes them from single-observable series. `series` raises `KeyError` for an unknown observable (the evaluator turns that into the agent bucket, never a guess).
 
 ## File Structure
-- Create: `pbg_emitters/run_reader.py` — `RunRef`, `RunReader`, backend detection, the three readers, `_cumulative_time`.
-- Modify: `pbg_emitters/__init__.py` — export `RunReader`, `RunRef`.
+- Create: `viva_emitters/run_reader.py` — `RunRef`, `RunReader`, backend detection, the three readers, `_cumulative_time`.
+- Modify: `viva_emitters/__init__.py` — export `RunReader`, `RunRef`.
 - Test: `tests/test_run_reader.py` — fixtures per backend (mirror `tests/test_sqlite_emitter.py` / `test_parquet_emitter.py` / `test_xarray_emitter.py` + `conftest.py`).
 
 ---
 
 ## Task 1: Skeleton + backend detection + cumulative-time helper
 
-**Files:** Create `pbg_emitters/run_reader.py`; Test `tests/test_run_reader.py`.
+**Files:** Create `viva_emitters/run_reader.py`; Test `tests/test_run_reader.py`.
 
 - [ ] **Step 1: Failing test for detection + the time helper**
 
@@ -52,7 +52,7 @@ class RunReader:
 # tests/test_run_reader.py
 import polars as pl
 from pathlib import Path
-from pbg_emitters.run_reader import RunReader, RunRef, _cumulative_time
+from viva_emitters.run_reader import RunReader, RunRef, _cumulative_time
 
 def test_detect_sqlite(tmp_path):
     db = tmp_path / "runs_history.db"; db.write_bytes(b"")  # presence-based for kind
@@ -82,7 +82,7 @@ Expected: FAIL (module/class missing).
 - [ ] **Step 3: Implement skeleton + detection + `_cumulative_time`**
 
 ```python
-# pbg_emitters/run_reader.py
+# viva_emitters/run_reader.py
 from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
@@ -137,7 +137,7 @@ class RunReader:
 ```
 
 - [ ] **Step 4: Run — expect PASS** (`.venv/bin/python -m pytest tests/test_run_reader.py -v`)
-- [ ] **Step 5: Commit** — `git add pbg_emitters/run_reader.py tests/test_run_reader.py && git commit -m "feat(run_reader): skeleton, backend detection, cumulative-time helper"`
+- [ ] **Step 5: Commit** — `git add viva_emitters/run_reader.py tests/test_run_reader.py && git commit -m "feat(run_reader): skeleton, backend detection, cumulative-time helper"`
 
 ---
 
@@ -145,7 +145,7 @@ class RunReader:
 
 Read the emitter `history` table directly (`step`, `global_time`, `state` JSON). Generation comes from a `generation` key in the state dict; observable resolved by dotted path into the state tree.
 
-**Files:** Modify `pbg_emitters/run_reader.py`; Test `tests/test_run_reader.py`.
+**Files:** Modify `viva_emitters/run_reader.py`; Test `tests/test_run_reader.py`.
 
 - [ ] **Step 1: Failing test (build a tiny 2-gen sqlite emitter db — mirror `tests/test_sqlite_emitter.py` for the table DDL)**
 
@@ -189,7 +189,7 @@ Add to `RunReader`: dispatch `series`/`observables`/`generations` on `self._kind
 
 Use the existing primitives: `dataset_sql(out_dir, [experiment_id])` → `history_sql`; `read_stacked_columns(history_sql, [col])` → polars DF with `generation, time, <col>`. Parse `out_dir`/`experiment_id` from the hive path.
 
-**Files:** Modify `pbg_emitters/run_reader.py`; Test `tests/test_run_reader.py`.
+**Files:** Modify `viva_emitters/run_reader.py`; Test `tests/test_run_reader.py`.
 
 - [ ] **Step 1: Failing test — build a tiny hive (mirror `tests/test_parquet_emitter.py`)**
 
@@ -215,7 +215,7 @@ assert "listeners.mass.cell_mass" in r.observables()  # de-flattened from column
 
 Open with `xr.open_datatree(store, engine="zarr")`. Per-gen dims `emitstep_gen=N` + timestamp var `time_gen=N`. Map observable path → variable via `ForestView.leaves()` / `LeafView.var_name()`.
 
-**Files:** Modify `pbg_emitters/run_reader.py`; Test `tests/test_run_reader.py`.
+**Files:** Modify `viva_emitters/run_reader.py`; Test `tests/test_run_reader.py`.
 
 - [ ] **Step 1: Failing test — build a tiny 2-gen datatree (mirror `tests/test_xarray_emitter.py`)** asserting `generations()==[1,2]`, `series("listeners.mass.cell_mass")` yields per-gen rows with `time` from `time_gen=N` and the value array, and `observables()` lists the leaf path.
 - [ ] **Step 2: Run — expect fail.**
@@ -227,9 +227,9 @@ Open with `xr.open_datatree(store, engine="zarr")`. Per-gen dims `emitstep_gen=N
 
 ## Task 5: Export + cross-backend equivalence + by_generation helper
 
-**Files:** Modify `pbg_emitters/__init__.py`, `pbg_emitters/run_reader.py`; Test `tests/test_run_reader.py`.
+**Files:** Modify `viva_emitters/__init__.py`, `viva_emitters/run_reader.py`; Test `tests/test_run_reader.py`.
 
-- [ ] **Step 1: Failing test** — `from pbg_emitters import RunReader, RunRef` works; add `by_generation(df) -> dict[int, pl.DataFrame]`; and an equivalence test: the SAME tiny dataset written to sqlite AND parquet yields identical `series(...)` `generation`/`time`/`value` (proves the normalization is backend-agnostic).
+- [ ] **Step 1: Failing test** — `from viva_emitters import RunReader, RunRef` works; add `by_generation(df) -> dict[int, pl.DataFrame]`; and an equivalence test: the SAME tiny dataset written to sqlite AND parquet yields identical `series(...)` `generation`/`time`/`value` (proves the normalization is backend-agnostic).
 - [ ] **Step 2: Run — expect fail.**
 - [ ] **Step 3: Implement** — add `by_generation`; export `RunReader`/`RunRef` from `__init__.py` (guard imports like the existing optional-extra pattern in `__init__.py`).
 - [ ] **Step 4: Run full suite** — `.venv/bin/python -m pytest -q` — all green (existing 40 + new).
@@ -238,7 +238,7 @@ Open with `xr.open_datatree(store, engine="zarr")`. Per-gen dims `emitstep_gen=N
 ---
 
 ## Self-Review
-- **Spec coverage:** §4.2 (emitter-aware reader in pbg-emitters, uniform interface over the 3 backends, observable resolution) → Tasks 2-5; generation/time normalization (gen-local reset stitched) → Task 1 + each backend. ✓ (Evaluator, schema, migration are B2/B3 — out of scope.)
+- **Spec coverage:** §4.2 (emitter-aware reader in viva-emitters, uniform interface over the 3 backends, observable resolution) → Tasks 2-5; generation/time normalization (gen-local reset stitched) → Task 1 + each backend. ✓ (Evaluator, schema, migration are B2/B3 — out of scope.)
 - **Placeholder scan:** fixtures reference the existing per-backend test files for exact store-construction patterns; everything else is complete code.
 - **Type consistency:** `series()` returns polars DF `["generation","time","abs_time","value"]` in all four tasks; `RunReader.open` / `.kind` / `.observables` / `.generations` / `.series` signatures stable across tasks; `_cumulative_time(df)->df` consistent.
 

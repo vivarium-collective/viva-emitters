@@ -32,7 +32,7 @@ import numpy as np  # noqa: E402
 import xarray as xr  # noqa: E402
 from xarray.backends import ZarrStore  # noqa: E402
 
-from pbg_emitters.xarray_emitter.zarr_writer import AsyncZarrBufferWriter  # noqa: E402
+from viva_emitters.xarray_emitter.zarr_writer import AsyncZarrBufferWriter  # noqa: E402
 
 
 APPEND_DIM = "elapsed_time_gen=1"

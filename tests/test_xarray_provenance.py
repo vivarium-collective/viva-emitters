@@ -48,8 +48,8 @@ def _build_and_run(tmp_path, core, provenance):
     writer treats as ROOT (``store/<independent_path>``), suitable for a fresh
     ``zarr.open_group`` reader. ``provenance`` may be an empty dict.
     """
-    from pbg_emitters.xarray_emitter import XArrayEmitter
-    from pbg_emitters.xarray_emitter.view import view_from_emit_paths
+    from viva_emitters.xarray_emitter import XArrayEmitter
+    from viva_emitters.xarray_emitter.view import view_from_emit_paths
 
     core.register_link("Counter", Counter)
     core.register_link("XArrayEmitter", XArrayEmitter)
