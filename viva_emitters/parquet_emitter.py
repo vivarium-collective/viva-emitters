@@ -34,8 +34,8 @@ try:
     from polars.datatypes import DataTypeClass
 except ImportError as e:
     raise ImportError(
-        f"pbg_emitters.parquet_emitter requires the [parquet] extra. "
-        f"Install with: pip install 'pbg-emitters[parquet]'. (missing: {e.name})"
+        f"viva_emitters.parquet_emitter requires the [parquet] extra. "
+        f"Install with: pip install 'viva-emitters[parquet]'. (missing: {e.name})"
     ) from e
 
 from process_bigraph.emitter import Emitter
@@ -320,7 +320,7 @@ def ndlist_to_ndarray(s) -> np.ndarray:
 
         import duckdb
         import polars as pl
-        from pbg_emitters import ndlist_to_ndarray
+        from viva_emitters import ndlist_to_ndarray
         def sum_arrays(col_0, col_1):
             return pl.Series(
                 ndlist_to_ndarray(col_0) +
@@ -628,7 +628,7 @@ def read_stacked_columns(
     with indices 100, 1000, and 10000 per cell::
 
         import duckdb
-        from pbg_emitters import dataset_sql, read_stacked_columns
+        from viva_emitters import dataset_sql, read_stacked_columns
         history_sql, config_sql, _ = dataset_sql('out/', 'exp_id')
         subquery = read_stacked_columns(
             history_sql,
@@ -1009,7 +1009,7 @@ class ParquetEmitter(Emitter):
 
     @classmethod
     def emitter_contract(cls):
-        from pbg_emitters.contract import EmitterContract
+        from viva_emitters.contract import EmitterContract
         return EmitterContract(output_kind="parquet", output_uri_config_key="out_uri")
 
     def __init__(self, config: dict[str, Any], core: Any) -> None:

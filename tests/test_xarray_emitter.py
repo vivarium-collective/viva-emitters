@@ -1,4 +1,4 @@
-"""Unit tests for pbg_emitters.xarray_emitter."""
+"""Unit tests for viva_emitters.xarray_emitter."""
 
 import pytest
 
@@ -8,7 +8,7 @@ pytest.importorskip("zarr")
 
 
 def test_base_module_imports():
-    from pbg_emitters.xarray_emitter._base import (
+    from viva_emitters.xarray_emitter._base import (
         BufferedEmitter, StoragePartition, BlockingExecutor,
     )
     assert BufferedEmitter is not None
@@ -17,7 +17,7 @@ def test_base_module_imports():
 
 
 def test_storage_partition_dataclass():
-    from pbg_emitters.xarray_emitter._base import StoragePartition
+    from viva_emitters.xarray_emitter._base import StoragePartition
 
     p = StoragePartition(
         experiment_id="exp1", variant=2, lineage_seed=7, agent_id="01"
@@ -26,8 +26,8 @@ def test_storage_partition_dataclass():
     assert p.parent.agent_id == "0"
 
 
-def test_buffered_emitter_inherits_pbg_emitter():
-    from pbg_emitters.xarray_emitter._base import BufferedEmitter
+def test_buffered_emitter_inherits_viva_emitter():
+    from viva_emitters.xarray_emitter._base import BufferedEmitter
     from process_bigraph.emitter import Emitter
     assert issubclass(BufferedEmitter, Emitter)
 
@@ -38,17 +38,17 @@ def test_all_submodules_import():
         "transducer", "view", "storage", "writer", "zarr_writer",
         "emit_path", "emit_predicate", "utils",
     ):
-        __import__(f"pbg_emitters.xarray_emitter.{name}")
+        __import__(f"viva_emitters.xarray_emitter.{name}")
 
 
 def test_xarray_emitter_imports():
-    from pbg_emitters.xarray_emitter import XArrayEmitter
+    from viva_emitters.xarray_emitter import XArrayEmitter
     from process_bigraph.emitter import Emitter
     assert issubclass(XArrayEmitter, Emitter)
 
 
 def test_xarray_emitter_config_schema_has_expected_keys():
-    from pbg_emitters.xarray_emitter import XArrayEmitter
+    from viva_emitters.xarray_emitter import XArrayEmitter
     for key in (
         "emit", "out_uri", "transducer", "view", "writer",
         "metadata", "metadata_keys", "metadata_validators",
@@ -58,7 +58,7 @@ def test_xarray_emitter_config_schema_has_expected_keys():
 
 
 def test_metadata_validators_failure_raises(minimal_xarray_config, core):
-    from pbg_emitters.xarray_emitter import XArrayEmitter
+    from viva_emitters.xarray_emitter import XArrayEmitter
 
     cfg = {
         **minimal_xarray_config,
@@ -71,7 +71,7 @@ def test_metadata_validators_failure_raises(minimal_xarray_config, core):
 
 def test_empty_metadata_validators_no_op(minimal_xarray_config, core):
     """Empty validators dict => no validation error from the validator path."""
-    from pbg_emitters.xarray_emitter import XArrayEmitter
+    from viva_emitters.xarray_emitter import XArrayEmitter
 
     cfg = {**minimal_xarray_config, "metadata_validators": {}}
     # If construction raised a ValueError from a validator, the test would fail.
@@ -92,7 +92,7 @@ def test_async_zarr_buffer_writer_has_out_uri(tmp_path):
     returns False from _buffers(inst) and skips close()/consolidate(),
     leaving the zarr store unconsolidated → sqlite fallback.
     """
-    from pbg_emitters.xarray_emitter.writer import AsyncBufferWriter
+    from viva_emitters.xarray_emitter.writer import AsyncBufferWriter
 
     store = str(tmp_path / "test_writer.zarr")
     config = {
@@ -113,7 +113,7 @@ def test_xarray_emitter_writer_out_uri_accessible(minimal_xarray_config, core):
     confirms the emitter's writer exposes out_uri after construction.
     Also covers emitter.py:200 (self.writer.out_uri in query()).
     """
-    from pbg_emitters.xarray_emitter import XArrayEmitter
+    from viva_emitters.xarray_emitter import XArrayEmitter
 
     emitter = XArrayEmitter(config=minimal_xarray_config, core=core)
     # must not raise AttributeError

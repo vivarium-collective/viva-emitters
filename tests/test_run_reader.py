@@ -1,4 +1,4 @@
-"""Tests for pbg_emitters.run_reader — one test file, all four backends."""
+"""Tests for viva_emitters.run_reader — one test file, all four backends."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from pbg_emitters.run_reader import RunReader, RunRef, _cumulative_time
+from viva_emitters.run_reader import RunReader, RunRef, _cumulative_time
 
 
 # ============================================================================
@@ -80,7 +80,7 @@ def _make_sqlite(tmp_path):
     - global_time is stored in the 'global_time' column (separate from state).
     """
     from bigraph_schema import allocate_core
-    from pbg_emitters.sqlite_emitter import SQLiteEmitter
+    from viva_emitters.sqlite_emitter import SQLiteEmitter
 
     db_file = "h.db"
 
@@ -253,7 +253,7 @@ def _make_xarray(tmp_path):
 
     NOTE: This fixture is hand-crafted to match the documented XArray emitter
     storage layout (TIME_COO_PREFIX / TIME_VAR_PREFIX naming conventions from
-    pbg_emitters.xarray_emitter.storage).  It has NOT been verified against a
+    viva_emitters.xarray_emitter.storage).  It has NOT been verified against a
     real on-disk zarr store — no real zarr store is available for integration
     testing.  If the XArrayEmitter storage format drifts, this fixture may
     silently stay green.
@@ -332,15 +332,15 @@ def test_xarray_unknown_observable(tmp_path):
 
 
 def test_import_from_package():
-    """RunReader and RunRef export from pbg_emitters top-level."""
-    from pbg_emitters import RunReader as RR, RunRef as RF  # noqa: F401
+    """RunReader and RunRef export from viva_emitters top-level."""
+    from viva_emitters import RunReader as RR, RunRef as RF  # noqa: F401
     assert RR is not None
     assert RF is not None
 
 
 def test_by_generation(tmp_path):
     """by_generation splits a series DataFrame by generation."""
-    from pbg_emitters.run_reader import by_generation
+    from viva_emitters.run_reader import by_generation
 
     db = _make_sqlite(tmp_path)
     r = RunReader.open(str(db))

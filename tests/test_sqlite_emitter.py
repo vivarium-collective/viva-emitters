@@ -1,4 +1,4 @@
-"""Tests for pbg_emitters.sqlite_emitter.
+"""Tests for viva_emitters.sqlite_emitter.
 
 Adapted from process-bigraph's tests.py — covers retrieval helpers,
 the paths/query kwarg, subsample, batch_size, and close() semantics.
@@ -12,7 +12,7 @@ import tempfile
 
 import pytest
 
-from pbg_emitters.sqlite_emitter import (
+from viva_emitters.sqlite_emitter import (
     SQLiteEmitter,
     save_simulation_metadata,
     mark_simulation_finished,

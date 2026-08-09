@@ -59,8 +59,8 @@ def _inject_emitter_as_step(composite, core, config, address):
 
 
 def test_xarray_emitter_runs_as_flat_step(tmp_path):
-    from pbg_emitters.xarray_emitter import XArrayEmitter
-    from pbg_emitters.xarray_emitter.view import view_from_emit_paths
+    from viva_emitters.xarray_emitter import XArrayEmitter
+    from viva_emitters.xarray_emitter.view import view_from_emit_paths
 
     core = allocate_core()
     core.register_link("Counter", Counter)

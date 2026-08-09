@@ -1,7 +1,7 @@
 """Per-agent emitter-lifecycle management for process-bigraph composites.
 
 In a multi-generation / dividing-cell composite, an emitter (e.g. a
-:class:`~pbg_emitters.parquet_emitter.ParquetEmitter`) is constructed deep
+:class:`~viva_emitters.parquet_emitter.ParquetEmitter`) is constructed deep
 inside a composite's step factory — the driver and the division step never
 see the instance, so neither can call ``close()`` on it. When a cell divides
 its agent subtree is torn down (e.g. via a ``{'agents': {'_remove': [...]}}``

@@ -32,7 +32,7 @@ _RAM = EmitterContract(output_kind="ram", output_uri_config_key=None)
 register_contract("ram", _RAM)
 register_contract("RAMEmitter", _RAM)
 
-# Self-register the pbg emitters under short + class name. Guarded because the
+# Self-register the viva emitters under short + class name. Guarded because the
 # emitter modules may require extras that aren't installed (mirrors __init__).
 try:
     from .sqlite_emitter import SQLiteEmitter

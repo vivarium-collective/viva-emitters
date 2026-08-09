@@ -11,12 +11,12 @@ import sys
 # The xarray backend's implementation modules use Python 3.12+ syntax
 # (PEP 695 type aliases / generic classes, PEP 701 f-strings). On < 3.12 those
 # modules raise SyntaxError at import, which is NOT an ImportError and so would
-# escape the optional-extra guards in ``pbg_emitters/__init__`` and crash every
-# importer of ``process_bigraph`` (which imports pbg_emitters). Fail early here
+# escape the optional-extra guards in ``viva_emitters/__init__`` and crash every
+# importer of ``process_bigraph`` (which imports viva_emitters). Fail early here
 # with a clean ImportError so the optional backend degrades gracefully instead.
 if sys.version_info < (3, 12):
     raise ImportError(
-        "pbg_emitters.xarray_emitter requires Python >= 3.12 "
+        "viva_emitters.xarray_emitter requires Python >= 3.12 "
         "(uses PEP 695 / PEP 701 syntax); the [xarray] backend is unavailable "
         f"on this interpreter (Python {sys.version_info.major}.{sys.version_info.minor})."
     )
@@ -27,10 +27,10 @@ try:
     import zarrs   # noqa: F401
 except ImportError as e:
     raise ImportError(
-        f"pbg_emitters.xarray_emitter requires the [xarray] extra "
-        f"(pip install 'pbg-emitters[xarray]'). (missing: {e.name})"
+        f"viva_emitters.xarray_emitter requires the [xarray] extra "
+        f"(pip install 'viva-emitters[xarray]'). (missing: {e.name})"
     ) from e
 
-from pbg_emitters.xarray_emitter.emitter import XArrayEmitter
+from viva_emitters.xarray_emitter.emitter import XArrayEmitter
 
 __all__ = ["XArrayEmitter"]

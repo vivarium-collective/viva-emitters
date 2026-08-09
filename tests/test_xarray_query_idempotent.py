@@ -61,8 +61,8 @@ def _inject_emitter_as_step(composite, core, config, address):
 
 def _run_emitter(tmp_path, n_ticks, *, buffer_size=BUFFER_SIZE):
     """Drive an XArrayEmitter for ``n_ticks`` and return the (still-open) instance."""
-    from pbg_emitters.xarray_emitter import XArrayEmitter
-    from pbg_emitters.xarray_emitter.view import view_from_emit_paths
+    from viva_emitters.xarray_emitter import XArrayEmitter
+    from viva_emitters.xarray_emitter.view import view_from_emit_paths
 
     core = allocate_core()
     core.register_link("Counter", Counter)

@@ -1,4 +1,4 @@
-# pbg-emitters
+# viva-emitters
 
 Focused emitter library for [process-bigraph](https://github.com/vivarium-collective/process-bigraph)
 composites. Hosts the heavy-dependency emitters out-of-tree so the
@@ -15,9 +15,9 @@ The zero-dependency built-ins — `RAMEmitter`, `ConsoleEmitter`, `JSONEmitter`
 ## Install
 
 ```bash
-pip install 'pbg-emitters[sqlite]'        # SQLiteEmitter only
-pip install 'pbg-emitters[parquet]'       # ParquetEmitter only
-pip install 'pbg-emitters[sqlite,parquet]'  # both
+pip install 'viva-emitters[sqlite]'        # SQLiteEmitter only
+pip install 'viva-emitters[parquet]'       # ParquetEmitter only
+pip install 'viva-emitters[sqlite,parquet]'  # both
 ```
 
 The `[sqlite]` extra is empty (Python's stdlib `sqlite3` is enough); it exists
@@ -27,7 +27,7 @@ for symmetry. The `[parquet]` extra pulls in `duckdb`, `polars`, `pyarrow`,
 ## Usage
 
 ```python
-from pbg_emitters import SQLiteEmitter, ParquetEmitter
+from viva_emitters import SQLiteEmitter, ParquetEmitter
 
 # Wire either as a step inside a process-bigraph Composite, e.g. via the
 # usual emitter_from_wires helper:

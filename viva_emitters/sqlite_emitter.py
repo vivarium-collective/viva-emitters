@@ -314,7 +314,7 @@ class SQLiteEmitter(Emitter):
 
     @classmethod
     def emitter_contract(cls):
-        from pbg_emitters.contract import EmitterContract
+        from viva_emitters.contract import EmitterContract
         return EmitterContract(output_kind="sqlite", output_uri_config_key="db_file")
 
     def __init__(self, config, core):

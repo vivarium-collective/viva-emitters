@@ -4,9 +4,9 @@
 
 **Goal:** Teach `RunReader` to read the per-observable NAME CATALOG that self-describing stores now carry (sub-project #1) and to resolve a structured selector — `index_by={type, value}` and `aggregate={op, over:[ids]}` — to a numeric series **from the stored run alone** (no sim_data). This is what lets the evaluator compute the authored dnaa **vector** verdicts (e.g. "sum monomer_counts across DnaA forms").
 
-**Architecture:** Extend `RunReader` (`pbg_emitters/run_reader.py`) with `catalog()`, `resolve_id()`, a selector-aware series, and `aggregate_series()`. Catalog source per backend: parquet → `field_metadata(conn, config_sql, "<flattened path>")` for listener vectors (+ the `bulk__id` history column for bulk); xarray → the `id_<var>` coordinate; sqlite → `simulations.metadata["output_metadata"]`. Resolution: id → index via the catalog → pull/sum that element's per-tick series, returning the same `[generation, time, abs_time, value]` shape as `series()`. **Never-guess:** unknown id / absent catalog → raise a typed error (the evaluator routes to the agent bucket), never a fabricated value.
+**Architecture:** Extend `RunReader` (`viva_emitters/run_reader.py`) with `catalog()`, `resolve_id()`, a selector-aware series, and `aggregate_series()`. Catalog source per backend: parquet → `field_metadata(conn, config_sql, "<flattened path>")` for listener vectors (+ the `bulk__id` history column for bulk); xarray → the `id_<var>` coordinate; sqlite → `simulations.metadata["output_metadata"]`. Resolution: id → index via the catalog → pull/sum that element's per-tick series, returning the same `[generation, time, abs_time, value]` shape as `series()`. **Never-guess:** unknown id / absent catalog → raise a typed error (the evaluator routes to the agent bucket), never a fabricated value.
 
-**Tech Stack:** Python 3.11+, polars, duckdb; pytest. Spec: `pbg-superpowers/docs/specs/2026-06-09-readout-coordination-design.md` (#2). Builds on RunReader (merged #6).
+**Tech Stack:** Python 3.11+, polars, duckdb; pytest. Spec: `viva-superpowers/docs/specs/2026-06-09-readout-coordination-design.md` (#2). Builds on RunReader (merged #6).
 
 ---
 
@@ -25,8 +25,8 @@ def aggregate_series(self, observable: str, op: str, over: list[str]) -> pl.Data
 `index_by.type` → (observable, catalog) mapping: `bulk_id`→ observable `bulk`/`bulk__count`, catalog = `bulk__id`; `monomer_id`→ observable `listeners.monomer_counts`, catalog via `output_metadata`; `listener_id`→ a named element of a listener vector via its `output_metadata` catalog; `literal_index`→ index directly, no catalog. (Keep the type→observable map small + overridable; the readout schema in #3 will supply it explicitly.)
 
 ## File map
-- Modify: `pbg_emitters/run_reader.py` (the methods above + per-backend catalog readers + error types `IdNotInCatalog`, `CatalogUnavailable`).
-- Modify: `pbg_emitters/__init__.py` (export the error types if useful).
+- Modify: `viva_emitters/run_reader.py` (the methods above + per-backend catalog readers + error types `IdNotInCatalog`, `CatalogUnavailable`).
+- Modify: `viva_emitters/__init__.py` (export the error types if useful).
 - Test: `tests/test_run_reader_catalog.py`.
 
 ---

@@ -62,7 +62,7 @@ def _colony_config(store, agent_id):
 
 def _drive_colony_generation(core, store, agent_id):
     """Run one colony generation into `store` with the legacy emit shape."""
-    from pbg_emitters.xarray_emitter import XArrayEmitter
+    from viva_emitters.xarray_emitter import XArrayEmitter
 
     emitter = XArrayEmitter(_colony_config(store, agent_id), core=core)
     part = emitter.partition
@@ -97,7 +97,7 @@ def test_short_generation_final_flush_writes_data(tmp_path, n_updates):
     fix that final flush asserted, the runner swallowed it, and the store was
     left an empty group skeleton (silent data loss).
     """
-    from pbg_emitters.xarray_emitter import XArrayEmitter
+    from viva_emitters.xarray_emitter import XArrayEmitter
 
     core = allocate_core()
     store = str(tmp_path / f"short_{n_updates}.zarr")
@@ -146,7 +146,7 @@ def test_xarray_colony_partition_uses_lineage_layout(tmp_path):
 
 def test_xarray_flat_is_the_default_strategy(tmp_path):
     """Sanity: omitting `strategy` yields the flat (generation==1) partition."""
-    from pbg_emitters.xarray_emitter import XArrayEmitter
+    from viva_emitters.xarray_emitter import XArrayEmitter
 
     core = allocate_core()
     store = str(tmp_path / "default.zarr")

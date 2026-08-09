@@ -528,7 +528,7 @@ class RunReader:
     def _parquet_all_sql(self):
         """Return ``(conn, history_sql, config_sql)``; result is cached."""
         if not hasattr(self, "_pq_cache"):
-            from pbg_emitters.parquet_emitter import create_duckdb_conn, dataset_sql
+            from viva_emitters.parquet_emitter import create_duckdb_conn, dataset_sql
 
             p = Path(self._ref.store)
             out_dir = str(p.parent)
@@ -544,7 +544,7 @@ class RunReader:
         return conn, history_sql
 
     def _parquet_observables(self) -> list[str]:
-        from pbg_emitters.parquet_emitter import list_columns
+        from viva_emitters.parquet_emitter import list_columns
 
         conn, history_sql = self._parquet_conn_sql()
         all_cols = list_columns(conn, history_sql)
@@ -563,7 +563,7 @@ class RunReader:
         return result["generation"].cast(pl.Int64).to_list()
 
     def _parquet_series(self, observable: str) -> pl.DataFrame:
-        from pbg_emitters.parquet_emitter import list_columns
+        from viva_emitters.parquet_emitter import list_columns
 
         col_name = observable.replace(".", "__")
         conn, history_sql = self._parquet_conn_sql()
@@ -605,7 +605,7 @@ class RunReader:
           configuration parquet (written by :func:`parquet_emitter.field_metadata`).
         * Returns ``None`` when no catalog is available.
         """
-        from pbg_emitters.parquet_emitter import list_columns, METADATA_PREFIX
+        from viva_emitters.parquet_emitter import list_columns, METADATA_PREFIX
 
         conn, history_sql, config_sql = self._parquet_all_sql()
 
@@ -644,7 +644,7 @@ class RunReader:
 
     def _parquet_select_element(self, col_name: str, idx: int) -> pl.DataFrame:
         """Extract the scalar at position *idx* from list column *col_name* per tick."""
-        from pbg_emitters.parquet_emitter import list_columns
+        from viva_emitters.parquet_emitter import list_columns
 
         conn, history_sql, _ = self._parquet_all_sql()
         all_cols = list_columns(conn, history_sql)
@@ -672,7 +672,7 @@ class RunReader:
         self, col_name: str, indices: list[int], op: str
     ) -> pl.DataFrame:
         """Reduce multiple list-column elements in a single DuckDB query."""
-        from pbg_emitters.parquet_emitter import list_columns
+        from viva_emitters.parquet_emitter import list_columns
 
         conn, history_sql, _ = self._parquet_all_sql()
         all_cols = list_columns(conn, history_sql)
@@ -736,7 +736,7 @@ class RunReader:
         ``/experiment_id=X/variant=0/lineage_seed=0``).  This helper
         searches root first, then all groups, so both layouts work.
         """
-        from pbg_emitters.xarray_emitter.storage import TIME_COO_PREFIX
+        from viva_emitters.xarray_emitter.storage import TIME_COO_PREFIX
 
         # Fast path: root node (hand-crafted test fixtures)
         root_ds = dt["/"].ds
@@ -760,7 +760,7 @@ class RunReader:
         (root for hand-crafted fixtures; partition path for XArrayEmitter).
         """
         # Import constants lazily — only executed on xarray backend
-        from pbg_emitters.xarray_emitter.storage import (
+        from viva_emitters.xarray_emitter.storage import (
             TIME_COO_PREFIX,
             TIME_VAR_PREFIX,
         )
@@ -831,7 +831,7 @@ class RunReader:
     def _xarray_catalog(self, observable: str) -> list | None:
         """Return the ``id_<var>`` coordinate values for *observable*, or ``None``."""
         try:
-            from pbg_emitters.xarray_emitter.storage import VAR_COO_PREFIX
+            from viva_emitters.xarray_emitter.storage import VAR_COO_PREFIX
         except ImportError:
             return None
 
@@ -889,7 +889,7 @@ class RunReader:
     def _sqlite_catalog(self, observable: str) -> list | None:
         """Return catalog from SQLite ``simulations`` metadata, or ``None``."""
         try:
-            from pbg_emitters.sqlite_emitter import load_simulation_metadata
+            from viva_emitters.sqlite_emitter import load_simulation_metadata
         except ImportError:
             return None
 

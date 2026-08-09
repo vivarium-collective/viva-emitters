@@ -887,74 +887,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pbg-emitters"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "bigraph-schema" },
-    { name = "numpy" },
-    { name = "process-bigraph" },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "duckdb" },
-    { name = "fsspec" },
-    { name = "pint" },
-    { name = "polars" },
-    { name = "pyarrow" },
-    { name = "pytest" },
-    { name = "tqdm" },
-    { name = "unum" },
-    { name = "xarray" },
-    { name = "zarr" },
-    { name = "zarrs" },
-]
-parquet = [
-    { name = "duckdb" },
-    { name = "fsspec" },
-    { name = "polars" },
-    { name = "pyarrow" },
-    { name = "tqdm" },
-]
-xarray = [
-    { name = "pint" },
-    { name = "unum" },
-    { name = "xarray" },
-    { name = "zarr" },
-    { name = "zarrs" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "bigraph-schema" },
-    { name = "duckdb", marker = "extra == 'dev'" },
-    { name = "duckdb", marker = "extra == 'parquet'" },
-    { name = "fsspec", marker = "extra == 'dev'" },
-    { name = "fsspec", marker = "extra == 'parquet'" },
-    { name = "numpy" },
-    { name = "pint", marker = "extra == 'dev'" },
-    { name = "pint", marker = "extra == 'xarray'" },
-    { name = "polars", marker = "extra == 'dev'" },
-    { name = "polars", marker = "extra == 'parquet'" },
-    { name = "process-bigraph", specifier = ">=1.4.12" },
-    { name = "pyarrow", marker = "extra == 'dev'" },
-    { name = "pyarrow", marker = "extra == 'parquet'" },
-    { name = "pytest", marker = "extra == 'dev'" },
-    { name = "tqdm", marker = "extra == 'dev'" },
-    { name = "tqdm", marker = "extra == 'parquet'" },
-    { name = "unum", marker = "extra == 'dev'" },
-    { name = "unum", marker = "extra == 'xarray'" },
-    { name = "xarray", marker = "extra == 'dev'", specifier = ">=2026.4" },
-    { name = "xarray", marker = "extra == 'xarray'", specifier = ">=2026.4" },
-    { name = "zarr", marker = "extra == 'dev'", specifier = "~=3.1.6" },
-    { name = "zarr", marker = "extra == 'xarray'", specifier = "~=3.1.6" },
-    { name = "zarrs", marker = "extra == 'dev'", specifier = ">=0.2" },
-    { name = "zarrs", marker = "extra == 'xarray'", specifier = ">=0.2" },
-]
-provides-extras = ["sqlite", "parquet", "xarray", "dev"]
-
-[[package]]
 name = "pillow"
 version = "12.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1570,6 +1502,74 @@ sdist = { url = "https://files.pythonhosted.org/packages/53/0c/06f8b233b8fd13b9e
 wheels = [
     { url = "https://files.pythonhosted.org/packages/7f/3e/5db95bcf282c52709639744ca2a8b149baccf648e39c8cc87553df9eae0c/urllib3-2.7.0-py3-none-any.whl", hash = "sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897", size = 131087, upload-time = "2026-05-07T16:13:17.151Z" },
 ]
+
+[[package]]
+name = "viva-emitters"
+version = "0.2.1"
+source = { editable = "." }
+dependencies = [
+    { name = "bigraph-schema" },
+    { name = "numpy" },
+    { name = "process-bigraph" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "duckdb" },
+    { name = "fsspec" },
+    { name = "pint" },
+    { name = "polars" },
+    { name = "pyarrow" },
+    { name = "pytest" },
+    { name = "tqdm" },
+    { name = "unum" },
+    { name = "xarray" },
+    { name = "zarr" },
+    { name = "zarrs" },
+]
+parquet = [
+    { name = "duckdb" },
+    { name = "fsspec" },
+    { name = "polars" },
+    { name = "pyarrow" },
+    { name = "tqdm" },
+]
+xarray = [
+    { name = "pint" },
+    { name = "unum" },
+    { name = "xarray" },
+    { name = "zarr" },
+    { name = "zarrs" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "bigraph-schema" },
+    { name = "duckdb", marker = "extra == 'dev'" },
+    { name = "duckdb", marker = "extra == 'parquet'" },
+    { name = "fsspec", marker = "extra == 'dev'" },
+    { name = "fsspec", marker = "extra == 'parquet'" },
+    { name = "numpy" },
+    { name = "pint", marker = "extra == 'dev'" },
+    { name = "pint", marker = "extra == 'xarray'" },
+    { name = "polars", marker = "extra == 'dev'" },
+    { name = "polars", marker = "extra == 'parquet'" },
+    { name = "process-bigraph", specifier = ">=1.4.12" },
+    { name = "pyarrow", marker = "extra == 'dev'" },
+    { name = "pyarrow", marker = "extra == 'parquet'" },
+    { name = "pytest", marker = "extra == 'dev'" },
+    { name = "tqdm", marker = "extra == 'dev'" },
+    { name = "tqdm", marker = "extra == 'parquet'" },
+    { name = "unum", marker = "extra == 'dev'" },
+    { name = "unum", marker = "extra == 'xarray'" },
+    { name = "xarray", marker = "extra == 'dev'", specifier = ">=2026.4" },
+    { name = "xarray", marker = "extra == 'xarray'", specifier = ">=2026.4" },
+    { name = "zarr", marker = "extra == 'dev'", specifier = "~=3.1.6" },
+    { name = "zarr", marker = "extra == 'xarray'", specifier = "~=3.1.6" },
+    { name = "zarrs", marker = "extra == 'dev'", specifier = ">=0.2" },
+    { name = "zarrs", marker = "extra == 'xarray'", specifier = ">=0.2" },
+]
+provides-extras = ["sqlite", "parquet", "xarray", "dev"]
 
 [[package]]
 name = "xarray"

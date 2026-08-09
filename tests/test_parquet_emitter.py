@@ -1,9 +1,9 @@
-"""Tests for pbg_emitters.parquet_emitter.
+"""Tests for viva_emitters.parquet_emitter.
 
 Helper-function tests are ported from v2ecoli's
 ``tests/test_parquet_emitter_ported.py`` ``TestHelperFunctions`` class
 (which in turn comes from vEcoli). The vEcoli-specific dtype-override
-test was dropped since pbg-emitters has no built-in overrides.
+test was dropped since viva-emitters has no built-in overrides.
 
 Integration tests exercise the emitter directly through its
 ``update`` / ``query`` / ``close`` API, without a Composite.
@@ -24,11 +24,11 @@ try:
     import polars as pl
 except ImportError as e:  # pragma: no cover - skip whole module without extra
     pytest.skip(
-        f"pbg-emitters [parquet] extra not installed (missing: {e.name})",
+        f"viva-emitters [parquet] extra not installed (missing: {e.name})",
         allow_module_level=True,
     )
 
-from pbg_emitters.parquet_emitter import (
+from viva_emitters.parquet_emitter import (
     ParquetEmitter,
     _is_bookkeeping_field,
     _split_structured_arrays,
@@ -146,7 +146,7 @@ class TestHelperFunctions:
         # Empty arrays still have a dtype
         assert np_dtype(np.array([]), "empty_array_field") == np.float64
 
-        # Generic override path (no built-in overrides in pbg-emitters)
+        # Generic override path (no built-in overrides in viva-emitters)
         overrides = {
             "uint16_field": "UInt16",
             "listeners__*__index": "UInt32",

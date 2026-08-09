@@ -13,7 +13,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from pbg_emitters.run_reader import (
+from viva_emitters.run_reader import (
     RunReader,
     IdNotInCatalog,
     CatalogUnavailable,
@@ -406,8 +406,8 @@ def test_aggregate_series_bulk_real_hive():
 
 
 def test_error_types_importable():
-    """IdNotInCatalog and CatalogUnavailable are importable from pbg_emitters."""
-    from pbg_emitters import IdNotInCatalog as Inc, CatalogUnavailable as Cu  # noqa: F401
+    """IdNotInCatalog and CatalogUnavailable are importable from viva_emitters."""
+    from viva_emitters import IdNotInCatalog as Inc, CatalogUnavailable as Cu  # noqa: F401
     assert issubclass(Inc, KeyError)
     assert issubclass(Cu, LookupError)
 
