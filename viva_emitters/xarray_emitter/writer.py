@@ -334,6 +334,25 @@ class AsyncBufferWriter[StoreT](ABC):
         self._store = store
         self._store_finalizer = finalize(self, store.close)  # type: ignore[attr-defined]
 
+    @property
+    def is_1st_buf_in_generation(self) -> bool:
+        """
+        Whether the next buffer to be written is the first of this generation's
+        partition. Gates *encoding* computation, so every generation's freshly
+        created arrays (including ``generation > 1``) get their intended
+        chunking rather than Zarr's defaults.
+        """
+        return self.num_writes == 0
+
+    @property
+    def is_1st_buf_in_lineage(self) -> bool:
+        """
+        Whether the next buffer is the very first of the lineage (generation 1,
+        first buffer). Gates emission of the lineage-shared *coordinate data*,
+        which is written exactly once.
+        """
+        return self.partition.generation == 1 and self.is_1st_buf_in_generation
+
     def close(self) -> None:
         """
         Terminate the :py:attr:`.executor` thread, call :py:meth:`.consolidate`,
@@ -513,15 +532,12 @@ class AsyncBufferWriter[StoreT](ABC):
           final: Indicates the final buffer, which does not require copying.
         """
         assert self.num_writes >= 0
+        # flush() reads is_1st_buf_in_{lineage,generation} off self, so it must
+        # run BEFORE num_writes is incremented below.
         msg = transducer.flush(
-            # choose backend-specific encodings
-            self,
-            # emit coordinate data and encodings only with first trajectory buffer
-            include_static=(
-                self.partition.generation == 1 and self.num_writes == 0),
-            # final trajectory buffer does not require copying
-            final=final)
-        if self.num_writes > 0:
+            # choose backend-specific encodings; final buffer needs no copy
+            self, final=final)
+        if not self.is_1st_buf_in_generation:
             # finish writing previous buffer and update transport cache
             self.sync()
         self.future = self.executor.submit(self._write, *msg)
