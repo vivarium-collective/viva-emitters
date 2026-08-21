@@ -28,7 +28,7 @@ parquet = [
 ]
 xarray = [
     "xarray>=2026.04",
-    "zarr~=3.1.6",
+    "zarr>=3.1.6,<3.4",
     "zarrs>=0.2",
     "pint",
     "unum",
@@ -41,7 +41,7 @@ dev = [
     "fsspec",
     "tqdm",
     "xarray>=2026.04",
-    "zarr~=3.1.6",
+    "zarr>=3.1.6,<3.4",
     "zarrs>=0.2",
     "pint",
     "unum",
