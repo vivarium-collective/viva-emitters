@@ -393,24 +393,25 @@ class XarrayBuffer:
         self.__dict__.pop("added_paths", None)
 
     def render(
-        self, writer: AsyncBufferWriter | None, buf_size: int,
-        *, include_static: bool, copy: bool
-    ) -> tuple[xarray.DataTree, dict[str, VariableEncoding]]:
+        self, buf_size: int, /, *, include_coo: bool, copy: bool
+    ) -> xarray.DataTree:
         r"""
-        Assemble the output buffer components.
+        Assemble the output buffer's :py:class:`~xarray.DataTree`. The associated
+        :py:type:`.VariableEncoding`\ s are produced separately by
+        :py:meth:`.encodings`.
 
         Called by: :py:meth:`.XarrayTransducer.flush`.
 
-        Calls: :py:meth:`.VariableSpec.encoding` and
-        :py:meth:`xarray.DataTree.from_dict`.
+        Calls: :py:meth:`xarray.DataTree.from_dict`.
 
         Args:
-          writer:         Used for choosing backend-specific
-                          :py:type:`.VariableEncoding`\ s.
-          buf_size:       :py:attr:`.XarrayTransducer.buf_size`.
-          include_static: Include :py:attr:`.child_coords`
-                          and all :py:type:`.VariableEncoding`\ s.
-          copy:           Return a deep copy of arrays.
+          buf_size:    :py:attr:`.XarrayTransducer.buf_size`.
+          include_coo: Emit the lineage-shared :py:attr:`.child_coords`
+                       (only the first buffer of a lineage does). Appending
+                       buffers still re-attach the child *attributes*, so the
+                       stored unit annotations are not erased by
+                       :py:func:`!xarray.backends.writers.dump_to_store`.
+          copy:        Return a deep copy of arrays.
 
         .. note::
           The deep copy performed here is a conservative choice, which allows
@@ -440,12 +441,16 @@ class XarrayBuffer:
 
         # fetch child nodes
         assert set(self.child_coords) == set(self.child_vars)
-        match (include_static, copy):
+        match (include_coo, copy):
             case (False, False):
-                children = self.child_vars
+                # appending buffer: re-attach child attributes (units) so
+                # dump_to_store does not erase the ones written by the 1st buffer
+                children = {
+                    p: n.assign_attrs(**self.child_coords[p].attrs)
+                    for (p, n) in self.child_vars.items()}
             case (False, True):
                 children = {
-                    p: n._copy(deep=True)
+                    p: n._copy(deep=True).assign_attrs(**self.child_coords[p].attrs)
                     for (p, n) in self.child_vars.items()}
             case (True, False):
                 children = {
@@ -467,13 +472,27 @@ class XarrayBuffer:
                    for p in (self.added_paths | self.modified_paths)
                    ).issubset(buf.groups)
 
-        # fetch encodings
+        return buf
+
+    def encodings(
+        self, writer: AsyncBufferWriter, buf_size: int, /, *, include_coo: bool
+    ) -> dict[str, VariableEncoding]:
+        r"""
+        Backend-specific :py:type:`.VariableEncoding`\ s for the buffer produced
+        by :py:meth:`.render`. Computed on the first buffer of *every* generation
+        (so ``generation > 1`` arrays get their intended chunking), whereas the
+        child-coordinate encodings are requested only with ``include_coo``.
+
+        Called by: :py:meth:`.XarrayTransducer.flush`.
+
+        Calls: :py:meth:`.VariableSpec.encoding`.
+        """
         enc: dict[str, VariableEncoding] = {}
-        if include_static and writer is not None:
-            enc |= {"": self.time_spec.encoding(writer, buf_size)}
-            enc |= {str(path): var.encoding(writer, buf_size)
-                    for (path, var) in self.var_specs.items()}
-        return (buf, enc)
+        # the time coordinate is always (re)encoded
+        enc |= {"": self.time_spec.encoding(writer, buf_size, include_coo=True)}
+        enc |= {str(path): var.encoding(writer, buf_size, include_coo=include_coo)
+                for (path, var) in self.var_specs.items()}
+        return enc
 
     def get_time(self, buf_tix: int) -> float:
         """
@@ -615,7 +634,7 @@ class XarrayTransducer:
 
     def __str__(self) -> str:
         return self.display(self.buffer.render(
-            None, self.buf_size, include_static=True, copy=False)[0])
+            self.buf_size, include_coo=True, copy=False))
 
     def display(self, buf: DataTree, /) -> str:
         return (
@@ -690,7 +709,7 @@ class XarrayTransducer:
         return True
 
     def flush(
-        self, writer: AsyncBufferWriter, *, include_static: bool, final: bool
+        self, writer: AsyncBufferWriter, *, final: bool
     ) -> tuple[xarray.DataTree, dict[str, VariableEncoding], dict[str, Any]]:
         r"""
         Assemble the output buffer that will be sent to persistent storage, and
@@ -698,38 +717,46 @@ class XarrayTransducer:
 
         Called by: :py:meth:`.AsyncBufferWriter.write`.
 
-        Calls: :py:meth:`.XarrayBuffer.render` and
-        :py:meth:`.AsyncBufferWriter.merge_attributes`.
+        Calls: :py:meth:`.XarrayBuffer.render`, :py:meth:`.XarrayBuffer.encodings`
+        and :py:meth:`.AsyncBufferWriter.merge_attributes`.
+
+        The two logical-time predicates are decoupled: child *coordinate data*
+        is emitted once per lineage
+        (:py:attr:`.AsyncBufferWriter.is_1st_buf_in_lineage`), while *encodings*
+        are recomputed on the first buffer of *every* generation
+        (:py:attr:`.AsyncBufferWriter.is_1st_buf_in_generation`) — otherwise a
+        ``generation > 1`` partition's arrays are created with no encoding and
+        fall back to Zarr's default chunking.
 
         Args:
-          writer:         Used for choosing backend-specific
-                          :py:type:`.VariableEncoding`\ s and for combining
-                          metadata.
-          include_static: Include :py:attr:`.XarrayBuffer.child_coords`
-                          and all :py:type:`.VariableEncoding`\ s.
-          final:          Indicate the final buffer.
+          writer: Used for choosing backend-specific
+                  :py:type:`.VariableEncoding`\ s, for combining metadata, and
+                  for the buffer-position predicates.
+          final:  Indicate the final buffer.
 
         Returns:
           - A deep copy of the in-memory buffer.
-          - Backend-specific variable encodings, only if ``include_static``.
+          - Backend-specific variable encodings, only on the first buffer of a
+            generation.
           - A JSON-serializable reference to the latest emitted simulation step.
         """
         self.check_buffer()
         if final:
-            # include_static is valid on a final flush that is ALSO the first
-            # write of the partition (generation 1, num_writes == 0): a short
-            # generation whose only flush is the final one still needs its
-            # static coords/encodings written, else the partition is empty.
-            # truncate() shrinks buf_size AND the time coordinate to buf_tix, so
-            # the static encoding's coo.shape == (buf_size,) check stays valid.
+            # A short generation whose only flush is the final one still needs
+            # its encodings/coords written (is_1st_buf_in_generation is True),
+            # else the partition is empty. truncate() shrinks buf_size AND the
+            # time coordinate to buf_tix, so the encoding's
+            # coo.shape == (buf_size,) check stays valid.
             if self.buf_tix < self.buf_size:
                 # at least one unfilled emit step inside allocated buffer
                 self.truncate()
         else:
             assert self.buf_tix == self.buf_size
-        (buf, enc) = self.buffer.render(
-            writer, self.buf_size,
-            include_static=include_static, copy=not final)
+        include_coo = writer.is_1st_buf_in_lineage
+        buf = self.buffer.render(
+            self.buf_size, include_coo=include_coo, copy=not final)
+        enc = (self.buffer.encodings(writer, self.buf_size, include_coo=include_coo)
+               if writer.is_1st_buf_in_generation else {})
         writer.merge_attributes(buf)
         ref = {"sim_step": self.sim_tix,
                "sim_time": self.buffer.get_time(self.buf_tix - 1)}

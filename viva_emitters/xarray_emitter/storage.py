@@ -234,6 +234,20 @@ class VariableSpec:
                 else self.partition.dynamic_suffix)
 
     @property
+    def attr_name(self) -> str:
+        """
+        Attribute key under which this variable's ``unit`` annotation is stored
+        by :py:meth:`.alloc_coord`.
+
+        Unlike :py:attr:`.datavar_name` (which resolves to the generation
+        suffix ``gen=N`` for child variables), this is the variable's own name,
+        so each child variable's unit is keyed by itself rather than clobbered
+        under a shared per-generation key. For time variables the two coincide.
+        """
+        return (self.partition.time_var_name if self.is_time
+                else self.var_name)
+
+    @property
     def dim_names(self) -> tuple[str, ...]:
         """
         Dimension names used by :py:meth:`.alloc_var`, which are composed of
@@ -262,35 +276,46 @@ class VariableSpec:
         return np.zeros(self.dims(buf_size), dtype=self.dtype)
 
     def encoding(
-        self, writer: AsyncBufferWriter, buf_size: int, /
+        self, writer: AsyncBufferWriter, buf_size: int, /, *, include_coo: bool
     ) -> dict[str, VariableEncoding]:
         """
         Parameters used for writing a variable array and its coordinate array to
         persistent storage, including chunk sizes and compression codecs.
 
-        Called by: :py:meth:`.XarrayBuffer.render`.
+        Called by: :py:meth:`.XarrayBuffer.encodings`.
 
         Calls: :py:meth:`.AsyncBufferWriter.coo_codecs` and
         :py:meth:`.AsyncBufferWriter.var_codecs`.
+
+        Args:
+          include_coo: Emit the encoding for a *non-time child* coordinate. The
+            time coordinate is always encoded; child coordinates are written
+            only once per lineage (with the first buffer), so their encoding is
+            requested only then. The data-variable encoding is always emitted —
+            this is what gives ``generation > 1`` arrays their intended
+            ``b * buf_size`` chunking instead of Zarr's default.
         """
         b = writer.config["buffers_per_chunk"]
         # coordinate encoding
-        match (self.is_time, self.coord):
-            case (False, None):
-                coo_enc = {}
-            case (False, np.ndarray() as coo):
-                coo_enc = {self.coo_name: {
-                    # use 1 storage chunk for the coordinate array
-                    "chunks": coo.shape} | writer.coo_codecs(self)}
-            case (True, np.ndarray() as coo):
+        match (include_coo, self.is_time, self.coord):
+            case (_, True, np.ndarray() as coo):
                 assert coo.shape == (buf_size,)
-                coo_enc = {self.coo_name: {
-                    # use 1 storage chunk for `b` buffers of the time coordinate
-                    "chunks": (b * buf_size,)} | writer.coo_codecs(self)}
-        # variable encoding
-        var_enc = {self.datavar_name: {
-            # use 1 storage chunk for `b` buffers of simulation data
-            "chunks": self.dims(b * buf_size)} | writer.var_codecs(self)}
+                # use 1 storage chunk for `b` buffers of the time coordinate;
+                # explicit chunks on the right so they win over any codec keys
+                coo_enc = {self.coo_name:
+                           writer.coo_codecs(self) | {"chunks": (b * buf_size,)}}
+            case (True, False, np.ndarray() as coo):
+                # use 1 storage chunk for the (lineage-shared) coordinate array
+                coo_enc = {self.coo_name:
+                           writer.coo_codecs(self) | {"chunks": coo.shape}}
+            case _:
+                # non-time coord on an appending buffer, or no coordinate
+                coo_enc = {}
+        # variable encoding (always emitted, including for generation > 1)
+        var_enc = {self.datavar_name:
+                   writer.var_codecs(self) | {
+                       # use 1 storage chunk for `b` buffers of simulation data
+                       "chunks": self.dims(b * buf_size)}}
         return coo_enc | var_enc
 
     # ~~~~~~~~~~~~~~~~~ #
@@ -356,7 +381,7 @@ class VariableSpec:
         """
         return Dataset(
             coords={} if self.coord is None else {self.coo_name: self.coord},
-            attrs={} if self.unit is None else {self.datavar_name: self.unit})
+            attrs={} if self.unit is None else {self.attr_name: self.unit})
 
     def alloc_var(self, buf_size: int, /) -> Dataset:
         """
