@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "viva-emitters"
-version = "0.2.3"
+version = "0.3.0"
 description = "Focused emitter library for process-bigraph composites — SQLite, Parquet, and beyond"
 readme = "README.md"
 license = { text = "MIT" }
