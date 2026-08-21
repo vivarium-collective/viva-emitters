@@ -29,6 +29,20 @@ if TYPE_CHECKING:
     from .writer import AsyncBufferWriter
 
 
+#: Default number of *emit steps* held in memory by :py:class:`.XarrayBuffer`
+#: before a flush, used when ``transducer.buffer.size`` is omitted.
+#:
+#: Sized so that, at a 1 Hz emission rate (``subsample.interval == 1``), the
+#: buffer flushes roughly every 10 min of *simulated* time — a handful of
+#: flushes per cell generation. That is the regime the transducer/writer
+#: pipeline is designed for: the transport-layer latency is 2+ orders of
+#: magnitude below the wall-clock time needed to fill one buffer, so flushing
+#: is cheap relative to simulation. Small buffers (e.g. 3--4) instead force a
+#: flush every few simulated seconds, which is pathological for both latency
+#: and compression ratio. See :py:class:`.XarrayTransducer` for how to tune it.
+DEFAULT_BUFFER_SIZE = 600
+
+
 # ==============================================================================
 
 
@@ -546,7 +560,7 @@ class XarrayTransducer:
       {
         "predicate": [...],
         "buffer": {
-          "size": 3
+          "size": 600
         }
       }
 
@@ -555,14 +569,26 @@ class XarrayTransducer:
       - ``predicate`` defines the criterion for which *simulation steps* also
         become *emit steps*, and is parsed by
         :py:class:`.ConjunctiveEmitPredicate`,
-      - while ``size`` is the number of *emit steps* stored in memory by
-        :py:class:`.XarrayBuffer`.
+      - while ``buffer.size`` is the number of *emit steps* stored in memory by
+        :py:class:`.XarrayBuffer` between flushes to the transport layer. It is
+        optional; when omitted it defaults to :py:data:`.DEFAULT_BUFFER_SIZE`.
 
     .. note::
-      The parameter ``size`` is intended to constrain the memory cost of each
-      simulation process, when many parallel simulations are executed in
-      parallel on a node with shared memory. Within that memory budget, larger
-      buffer sizes will result in fewer calls to the transport layer.
+      The parameter ``buffer.size`` is intended to constrain the memory cost of
+      each simulation process, when many parallel simulations are executed in
+      parallel on a node with shared memory. Within that memory budget, **larger
+      buffer sizes** directly translate into **fewer calls to the transport
+      layer**.
+
+      As a rule of thumb, size the buffer so that it flushes only a handful of
+      times per cell generation: the transport-layer latency is 2+ orders of
+      magnitude below the *simulation runtime* needed to fill one buffer, so
+      there is no benefit to flushing more often, and a small buffer (e.g. the
+      ``size == 3`` used by fast CI tests) forces a flush every few *simulated*
+      seconds — pathological for both latency and compression ratio. See
+      :py:data:`.DEFAULT_BUFFER_SIZE` for the omitted-value default, and
+      :py:class:`.AsyncBufferWriter` for how ``writer.buffers_per_chunk`` then
+      maps buffers onto persistent chunk files.
     """
 
     __slots__ = (
@@ -581,8 +607,11 @@ class XarrayTransducer:
         self.buffer: XarrayBuffer = XarrayBuffer(view, emit_root)
         """ In-memory cyclic buffer for simulation data. """
 
-        self.buf_size: int = _config["buffer"]["size"]
-        """ Size of time dimension. """
+        self.buf_size: int = (
+            (_config.get("buffer") or {}).get("size") or DEFAULT_BUFFER_SIZE
+        )
+        """ Size of time dimension. Defaults to :py:data:`.DEFAULT_BUFFER_SIZE`
+        when ``transducer.buffer.size`` is omitted. """
         self.buf_tix: int = 0
         """
         Current relative *emit step* inside the cyclic buffer; advanced at the
@@ -602,10 +631,10 @@ class XarrayTransducer:
             case None:
                 raise KeyError(emitter_arg_error(
                     cls, "Missing argument", "\"buffer\": {\"size\": ...}"))
-        match config.get("buffer", {}).get("size"):
+        match (config.get("buffer") or {}).get("size"):
             case None:
-                raise KeyError(emitter_arg_error(
-                    cls, "Missing argument", "\"buffer\": {\"size\": ...}"))
+                # Optional: XarrayTransducer falls back to DEFAULT_BUFFER_SIZE.
+                pass
             case int(buf_size) if buf_size > 2:
                 pass
             case buf_size:
