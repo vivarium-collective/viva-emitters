@@ -30,6 +30,8 @@ xarray = [
     "xarray>=2026.04",
     "zarr~=3.1.6",
     "zarrs>=0.2",
+    "bottleneck",
+    "fsspec",
     "pint",
     "unum",
 ]
@@ -39,6 +41,7 @@ dev = [
     "polars",
     "pyarrow",
     "fsspec",
+    "bottleneck",
     "tqdm",
     "xarray>=2026.04",
     "zarr~=3.1.6",
