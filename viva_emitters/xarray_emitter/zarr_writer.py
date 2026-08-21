@@ -156,8 +156,11 @@ async def consolidate_metadata(
         k: v.metadata
         async for (k, v) in
         group.members(max_depth=None, use_consolidated_for_children=False)}
-    # TODO: fix in `consolidate_metadata()` (zarr==3.1.6)
-    members_metadata |= {"": group.metadata}
+    # The root node is STRICTLY EXCLUDED from consolidated metadata: a "" entry
+    # is a self-reference that risks infinite loops in Zarr traversal functions
+    # (e.g. Group.tree()), not only ConsolidatedMetadata._flat_to_nested(). The
+    # root's own metadata lives on `group` itself. (Per @ntfrgl on PR #31;
+    # mirrors vEcoli be603b5d.)
 
     # combine and write consolidated metadata
     for k, v in members_metadata.items():
@@ -208,11 +211,14 @@ async def reconsolidate_metadata(
     # read metadata at updated paths
     group = _replace_consolidated_metadata(group, None)
     mod_members_metadata, add_members_metadata = [
-        {k: n.metadata async for (k, n) in _iter_from_keys(group, keys)}
+        # `if k` strictly excludes the root node: a "" entry is a self-reference
+        # that risks infinite loops in Zarr traversal functions (see
+        # consolidate_metadata above).
+        {k: n.metadata async for (k, n) in _iter_from_keys(group, keys) if k}
         for keys in [modified_keys, added_keys]]
 
     # check assumptions about metadata updates
-    old_keys = set(members_metadata.keys()) | {""}
+    old_keys = set(members_metadata.keys())
     assert set(mod_members_metadata.keys()).issubset(old_keys)
     assert set(add_members_metadata.keys()).isdisjoint(old_keys)
 
