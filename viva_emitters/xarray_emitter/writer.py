@@ -136,25 +136,35 @@ class AsyncBufferWriter[StoreT](ABC):
       - ``store`` is a URI interpreted by the backend,
       - ``threaded`` toggles the use of a separate writer thread,
       - ``buffers_per_chunk`` is the integer-valued size ratio, in terms of
-        *emit step* counts, between one chunk of backend storage and one
-        in-memory buffer,
+        *emit step* counts, between one *backend storage chunk* and one
+        *in-memory buffer*,
       - ``backend`` determines the transport layer subclass instantiated by
         :py:meth:`.dispatch`, e.g., :py:class:`.AsyncZarrBufferWriter`,
       - and ``backend_config`` is interpreted by the backend subclass.
 
     .. note::
-      The parameter ``buffers_per_chunk`` is intended to decouple the number of
-      output files from the choice of ``transducer.buffer.size`` in
-      :py:class:`.XarrayTransducer`. As a rule of thumb, 1 chunk file per
-      variable per generation is desirable in order to minimize the file system
-      pressure, unless a downstream application can benefit from smaller file
-      sizes.
+      Once the *in-memory* ``transducer.buffer.size`` in
+      :py:class:`.XarrayTransducer` has been set according to memory constraints
+      and transport latencies, the *number of output files* can be **configured
+      independently** via the parameter ``writer.buffers_per_chunk``.
 
-      The latter situation appears to be unlikely under current simulation use
-      cases. However, it may be supported in the future by extending the writer
-      configuration to further distinguish between *chunks* and *shards*, which
-      is `supported`_ by backends like Zarr.
+      As a rule of thumb:
 
+      - For **immutable** object storage systems (e.g., Amazon S3 Standard
+        storage class), ``writer.buffers_per_chunk`` must be set to 1, in order
+        to avoid *copying previous objects* when appending to them.
+      - For **local** or **HPC** file systems, as well as for **appendable**
+        object storage systems (e.g., `Amazon S3 Express One Zone`_ storage
+        class), 1 chunk file *per variable per generation* is desirable in order
+        to minimize the file system pressure --- this amounts to choosing
+        ``transducer.predicate.subsample.interval * transducer.buffer.size *
+        writer.buffers_per_chunk`` to approximately equal the expected number of
+        *simulation steps per generation*.
+      - In case future downstream applications require smaller chunk sizes, the
+        writer configuration may be extended to further distinguish between
+        *chunks* and *shards*, which is `supported`_ by backends like Zarr.
+
+    .. _Amazon S3 Express One Zone: https://docs.aws.amazon.com/AmazonS3/latest/userguide/directory-buckets-objects-append.html
     .. _supported: https://zarr.readthedocs.io/en/latest/user-guide/performance/#sharding
     """
 
