@@ -291,8 +291,18 @@ class XarrayBuffer:
                         # path is unchanged.
                         self.child_vars[x_node][x_var][t_ix] = val
                     emit_queue.discard(v_path)
+        # Any expected path still missing had its node REMOVED by a topology
+        # rewrite (e.g. a cell attaches to a biofilm and its free-standing node
+        # disappears; an agent divides, is engulfed, or bursts). Drop it — its
+        # series simply ends here — instead of crashing the whole run: the same
+        # "drop instead of crash" policy _drop_port uses for shape-varying ports.
         if len(emit_queue) and sim_tix > 0:
-            raise KeyError(f"Missing emit paths: {list(emit_queue)}")
+            for v_path in list(emit_queue):
+                loc = self.output_paths.get(v_path)
+                if loc is not None:
+                    self._drop_missing_path(loc[0], v_path)
+                else:
+                    self.dropped_paths.add(v_path)
 
     # ~~~~~~~~~~~~~~~~~ #
 
@@ -397,6 +407,30 @@ class XarrayBuffer:
                 f"{tuple(shape)} is not representable in a fixed-shape store "
                 f"(must be scalar or a stable 1-D vector).",
                 stacklevel=3)
+        self._forget_port(x_node, v_path)
+
+    def _drop_missing_path(self, x_node: NodePath, v_path: HierarchyPath, /) -> None:
+        """
+        Drop a once-emitted path whose node was REMOVED by a topology rewrite
+        (e.g. an agent divides, attaches, is engulfed, or bursts, so its
+        free-standing node disappears). Its series ends here — the alternative
+        is crashing the run on the "Missing emit paths" check.
+
+        Called by: :py:meth:`.write`.
+        """
+        if v_path not in self.dropped_paths:
+            warnings.warn(
+                f"XArray emitter: dropping port "
+                f"{'/'.join(str(p) for p in v_path)} — its node was removed by a "
+                f"topology rewrite; the series ends here.",
+                stacklevel=3)
+        self._forget_port(x_node, v_path)
+
+    def _forget_port(self, x_node: NodePath, v_path: HierarchyPath, /) -> None:
+        """Remove a port from every buffer structure so subsequent ticks skip
+        it, the "Missing emit paths" check ignores it, and :py:meth:`.render`
+        excludes it. Shared by :py:meth:`._drop_port` and
+        :py:meth:`._drop_missing_path`."""
         self.dropped_paths.add(v_path)
         self.var_specs.pop(x_node, None)
         self.child_vars.pop(x_node, None)
