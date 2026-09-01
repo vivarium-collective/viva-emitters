@@ -548,6 +548,58 @@ class TestParquetEmitterIntegration:
         assert df_sorted["time"].to_list() == [1.0, 2.0]
         assert df_sorted["keep"].to_list() == [10, 20]
 
+    def test_absent_numpy_column_is_null_not_fabricated_zero(
+        self, temp_dir, core
+    ):
+        """A field present at t0 and t2 but ABSENT at t1 must record NULL for
+        the t1 row — never a fabricated 0.
+
+        Regression for the pipeline-audit §2.8 data-integrity bug: the numpy
+        fast path pre-allocates ``np.zeros((batch_size,) + shape)`` at first
+        sight of a field, and an unwritten slot reads back as 0. For a
+        flattened per-molecule flux dict (the ``estimated_exchange_dmdt``
+        shape) a molecule key that drops out for a tick therefore manufactured
+        a "flux = 0" data point, silently. The missing slot must be null.
+        """
+        import numpy as np
+
+        emitter = ParquetEmitter(
+            config={
+                "out_dir": temp_dir,
+                "batch_size": 8,  # keep all three ticks in one batch
+                "threaded": False,
+                "metadata": {"experiment_id": "absent_column"},
+            },
+            core=core,
+        )
+        emitter.last_batch_future.result()
+
+        # ``flux`` is a length-3 vector (the numpy fast path) plus a scalar
+        # ``scalar_flux`` (a single flattened per-molecule key). Both are
+        # present at t0 and t2 but absent at t1.
+        emitter.update(
+            {"time": 1.0, "flux": np.array([0, 1, 2]), "scalar_flux": 7}
+        )
+        emitter.update({"time": 2.0})  # flux + scalar_flux ABSENT this tick
+        emitter.update(
+            {"time": 3.0, "flux": np.array([0, 2, 4]), "scalar_flux": 9}
+        )
+        emitter.close(success=False)
+
+        df = emitter.query().sort("time")
+        assert df["time"].to_list() == [1.0, 2.0, 3.0]
+        # The middle row must be NULL, not [0, 0, 0] / 0.
+        flux = df["flux"].to_list()
+        assert flux[0] == [0, 1, 2]
+        assert flux[1] is None, f"absent tick fabricated a value: {flux[1]!r}"
+        assert flux[2] == [0, 2, 4]
+        scalar = df["scalar_flux"].to_list()
+        assert scalar[0] == 7
+        assert scalar[1] is None, (
+            f"absent scalar tick fabricated a value: {scalar[1]!r}"
+        )
+        assert scalar[2] == 9
+
     def test_round_trip_quantity_unit_bearing_port(self, temp_dir, core):
         """A pint.Quantity (a ``quantity[...]`` port value) is stripped to its
         magnitude under the SAME column name, and the unit is recorded as

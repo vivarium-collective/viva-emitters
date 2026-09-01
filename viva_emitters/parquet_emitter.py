@@ -1230,6 +1230,26 @@ class ParquetEmitter(Emitter):
                 self.buffered_emits[k] = [None] * self.batch_size
             self.buffered_emits[k][emit_idx] = ser[0]
 
+        # A field that was seen on an earlier tick but is ABSENT this tick must
+        # record a null for this row — never a value. The numpy fast path
+        # pre-allocates ``np.zeros((batch_size,) + shape)`` at first sight of a
+        # field, so an unwritten slot in a numpy-backed column silently reads
+        # back as 0 (a fabricated "flux = 0" for a per-molecule flux dict whose
+        # key drops out for a tick). Polars-backed columns are pre-filled with
+        # ``None`` and are already correct. So: for any numpy-backed column not
+        # present this tick, convert it to the nullable Polars-list
+        # representation (the same conversion the mid-batch fallback above uses)
+        # so the missing slot — and any future gaps — become null, not zero.
+        for k, buf in list(self.buffered_emits.items()):
+            if k in flat or k in self._dropped_cols:
+                continue
+            if isinstance(buf, np.ndarray):
+                self.pl_serialized.add(k)
+                self.buffered_emits[k] = (
+                    buf[:emit_idx].tolist()
+                    + [None] * (self.batch_size - emit_idx)
+                )
+
         self.num_emits += 1
         if self.num_emits % self.batch_size == 0:
             # If last batch failed, that exception surfaces here.
