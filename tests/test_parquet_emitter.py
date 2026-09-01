@@ -695,3 +695,140 @@ class TestParquetEmitterIntegration:
         df = emitter.query().sort("time")
         assert df["ragged"].to_list() == [[1, 2, 3], [4, 5, 6, 7], [8]]
         assert "ragged" in emitter.pl_serialized
+
+    # ------------------------------------------------------------------
+    # Durable flush/close reconciliation (CD2 pipeline audit P1-1).
+    #
+    # Silent column drops / cross-file schema drift used to be surfaced only
+    # via ``warnings.warn`` (``_drop_column``) or ``print`` (inside
+    # ``json_to_parquet``) — both vanish when the write happens on a
+    # background thread or a detached subprocess. ``close()`` now writes a
+    # ``_reconcile.json`` sidecar next to the history Parquet files it
+    # describes, so a downstream reader can check for data-integrity
+    # problems without having watched stderr live during the run.
+    # ------------------------------------------------------------------
+
+    def test_reconcile_manifest_records_permanently_dropped_column(
+        self, temp_dir, core
+    ):
+        """A column dropped mid-run (ragged shape across ticks) is recorded in
+        the durable ``_reconcile.json`` at close() — not only raised as a
+        ``warnings.warn`` that a detached/background process can lose.
+        """
+        import json
+
+        emitter = ParquetEmitter(
+            config={
+                "out_dir": temp_dir,
+                "batch_size": 8,  # keep both ticks in one batch
+                "threaded": False,
+                "metadata": {"experiment_id": "ragged_manifest"},
+            },
+            core=core,
+        )
+        emitter.last_batch_future.result()
+
+        with pytest.warns(UserWarning, match="dropping column"):
+            emitter.update({"time": 1.0, "keep": 10, "ragged": 5})
+            emitter.update({"time": 2.0, "keep": 20,
+                            "ragged": np.array([1, 2, 3, 4])})
+        emitter.close(success=False)
+
+        manifest_path = os.path.join(
+            temp_dir, "ragged_manifest", "history", "_reconcile.json",
+        )
+        assert os.path.exists(manifest_path), "no durable reconcile manifest written"
+        with open(manifest_path) as f:
+            manifest = json.load(f)
+
+        # The drop is durably recorded, not just warned.
+        assert manifest["permanently_dropped_columns"] == ["ragged"]
+        assert "ragged" in manifest["declared_columns"]
+        assert "keep" in manifest["declared_columns"]
+        # The surviving column made it into the actual written partition(s).
+        assert manifest["partitions"], "no partition files recorded"
+        for partition in manifest["partitions"].values():
+            assert "keep" in partition["written_columns"]
+            assert "ragged" not in partition["written_columns"]
+
+    def test_reconcile_manifest_records_cross_file_schema_drift(
+        self, temp_dir, core
+    ):
+        """When a column's declared dtype evolves mid-run (e.g. widened by the
+        Polars-fallback path's ``union_pl_dtypes``), later history files can
+        physically write that column with a different dtype than earlier
+        files. That drift is detected and recorded in the manifest, not left
+        for a downstream ``union_by_name`` read to silently paper over.
+        """
+        import json
+
+        emitter = ParquetEmitter(
+            config={
+                "out_dir": temp_dir,
+                "batch_size": 1,  # one row per flush -> one file per tick
+                "threaded": False,
+                "metadata": {"experiment_id": "drift"},
+            },
+            core=core,
+        )
+        emitter.last_batch_future.result()
+
+        emitter.update({"time": 1.0, "value": 10})  # flushes as Int64
+        # Simulate the declared dtype for "value" having evolved mid-run
+        # (e.g. via a widening union_pl_dtypes call on the Polars fallback
+        # path) so the NEXT flush writes a different physical dtype for the
+        # same column name.
+        emitter.pl_types["value"] = pl.Float64()
+        emitter.update({"time": 2.0, "value": 20})  # flushes as Float64
+        emitter.close(success=False)
+
+        manifest_path = os.path.join(
+            temp_dir, "drift", "history", "_reconcile.json",
+        )
+        assert os.path.exists(manifest_path)
+        with open(manifest_path) as f:
+            manifest = json.load(f)
+
+        assert "value" in manifest["schema_drift"], manifest["schema_drift"]
+        dtypes_seen = set(manifest["schema_drift"]["value"].values())
+        assert len(dtypes_seen) > 1, (
+            f"expected >1 distinct dtype across files for 'value', got {dtypes_seen}"
+        )
+
+    def test_reconcile_manifest_clean_run_records_no_drops(self, temp_dir, core):
+        """A clean run (no drops, no drift) still gets a manifest — with empty
+        findings — so a reader doesn't have to infer "clean" from the
+        manifest's absence.
+        """
+        import json
+
+        emitter = ParquetEmitter(
+            config={
+                "out_dir": temp_dir,
+                "batch_size": 2,
+                "threaded": False,
+                "metadata": {"experiment_id": "clean"},
+            },
+            core=core,
+        )
+        emitter.last_batch_future.result()
+
+        emitter.update({"time": 1.0, "value": 10})
+        emitter.update({"time": 2.0, "value": 20})
+        emitter.update({"time": 3.0, "value": 30})
+        emitter.close(success=False)
+
+        manifest_path = os.path.join(
+            temp_dir, "clean", "history", "_reconcile.json",
+        )
+        assert os.path.exists(manifest_path)
+        with open(manifest_path) as f:
+            manifest = json.load(f)
+
+        assert manifest["permanently_dropped_columns"] == []
+        assert manifest["silently_dropped_columns"] == []
+        assert manifest["schema_drift"] == {}
+        assert set(manifest["declared_columns"]) == {"time", "value"}
+        assert manifest["partitions"], "no partition files recorded"
+        for partition in manifest["partitions"].values():
+            assert partition["dropped_in_flush"] == []

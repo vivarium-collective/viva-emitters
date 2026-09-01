@@ -19,7 +19,7 @@ import json
 import os
 import warnings
 from concurrent.futures import Future, ThreadPoolExecutor, Executor
-from typing import Any, Callable, Mapping, Optional, cast
+from typing import Any, Callable, Mapping, NamedTuple, Optional, cast
 from urllib import parse
 
 try:
@@ -81,13 +81,36 @@ columns with this prefix so it can be queried alongside the rest of the config.
 # ==============================================================================
 
 
+class FlushResult(NamedTuple):
+    """What actually landed on disk for one ``json_to_parquet`` call.
+
+    Returned (rather than only logged) so the caller can durably reconcile
+    "what we tried to write" against "what actually got written" — see
+    ``ParquetEmitter._record_flush_result`` / ``_write_reconcile_manifest``.
+    A ``print``/``warnings.warn`` inside this function alone is not enough:
+    when it runs on a background thread (or a detached subprocess in some
+    deployments) the message can vanish with nothing left to read back.
+    """
+
+    written_columns: list[str]
+    """Columns that actually ended up in the written Parquet file."""
+
+    dropped: list[str]
+    """Columns fed in via ``emit_dict`` that could not be stored (unstorable
+    time-varying shape) and were silently excluded from ``written_columns``."""
+
+    schema: dict[str, str]
+    """Column name -> str(polars dtype) as physically written to this file,
+    for cross-file schema-drift detection by the caller."""
+
+
 def json_to_parquet(
     emit_dict: dict[str, np.ndarray | list[pl.Series]],
     outfile: str,
     schema: dict[str, Any],
     filesystem: AbstractFileSystem,
     metadata: dict[str, str] | None = None,
-):
+) -> FlushResult:
     """Convert dictionary to Parquet.
 
     Args:
@@ -99,8 +122,14 @@ def json_to_parquet(
             write Parquet file atomically.
         metadata: Optional file-level Parquet key/value metadata (e.g. the
             unit string for each unit-bearing column).
+
+    Returns:
+        :class:`FlushResult` describing what was actually written for this
+        one file — the caller (:class:`ParquetEmitter`) accumulates these
+        across the run's batches into a durable reconcile manifest.
     """
     col_schema = {k: schema[k] for k in emit_dict}
+    dropped: list[str] = []
     try:
         tbl = pl.DataFrame(emit_dict, schema=col_schema)
     except (TypeError, ValueError, pl.exceptions.PolarsError) as exc:
@@ -113,7 +142,6 @@ def json_to_parquet(
         # every well-behaved observable so the batch is written and the viz has
         # data. (Unit metadata is file-level, so it is unaffected.)
         cols: list[pl.Series] = []
-        dropped: list[str] = []
         for k, v in emit_dict.items():
             try:
                 cols.append(pl.Series(k, v))
@@ -142,6 +170,11 @@ def json_to_parquet(
     )
     if temp_outfile != outfile:
         filesystem.mv(temp_outfile, outfile)
+    return FlushResult(
+        written_columns=list(tbl.columns),
+        dropped=dropped,
+        schema={c: str(tbl.schema[c]) for c in tbl.columns},
+    )
 
 
 def union_by_name(query_sql: str) -> str:
@@ -1052,6 +1085,27 @@ class ParquetEmitter(Emitter):
         self.num_emits: int = 0
         self.last_batch_future: Future = Future()
         self.last_batch_future.set_result(None)
+
+        # --- Durable flush/close reconciliation state (P1-1) ---
+        # Every column name ever seen in ``update(state)``, across the whole
+        # run — the "declared" schema this run is emitting.
+        self._declared_columns: set[str] = set()
+        # (outfile, {column names fed into that flush's emit_dict}) for the
+        # batch write currently in flight, so whichever call site next blocks
+        # on ``last_batch_future`` can synchronously reconcile its result.
+        # None when no flush is outstanding (e.g. the one-shot config write).
+        self._pending_flush: Optional[tuple[str, frozenset[str]]] = None
+        # Union, across every completed batch flush, of columns attempted vs.
+        # columns that actually landed on disk. A column present in the
+        # former but never in the latter was silently dropped from every
+        # single partition file that tried to carry it.
+        self._attempted_columns: set[str] = set()
+        self._ever_written_columns: set[str] = set()
+        # relative history file path -> {"written_columns": [...], "dropped_in_flush": [...]}
+        self._partition_manifest: dict[str, dict[str, list[str]]] = {}
+        # column name -> {relative history file path -> str(polars dtype)},
+        # used to detect cross-file schema drift for the same column.
+        self._column_schema_by_file: dict[str, dict[str, str]] = {}
         self.experiment_id: str = ""
         self.partitioning_path: str = ""
         self._closed: bool = False
@@ -1157,6 +1211,7 @@ class ParquetEmitter(Emitter):
         # queries keep working) and record the unit, written as Parquet file
         # metadata at flush.
         flat = strip_quantities(flat, self.column_units)
+        self._declared_columns.update(flat.keys())
         overrides = self.dtype_overrides
         emit_idx = self.num_emits % self.batch_size
 
@@ -1232,8 +1287,9 @@ class ParquetEmitter(Emitter):
 
         self.num_emits += 1
         if self.num_emits % self.batch_size == 0:
-            # If last batch failed, that exception surfaces here.
-            self.last_batch_future.result()
+            # If last batch failed, that exception surfaces here. Also
+            # durably reconciles that batch's result (see _wait_and_record).
+            self._wait_and_record()
             outfile = os.path.join(
                 self.out_uri,
                 self.experiment_id or "default",
@@ -1242,6 +1298,7 @@ class ParquetEmitter(Emitter):
                 f"{self.num_emits}.pq",
             )
             self.filesystem.makedirs(os.path.dirname(outfile), exist_ok=True)
+            self._pending_flush = (outfile, frozenset(self.buffered_emits))
             self.last_batch_future = self.executor.submit(
                 json_to_parquet,
                 self.buffered_emits,
@@ -1255,6 +1312,40 @@ class ParquetEmitter(Emitter):
             if self.threaded:
                 self.buffered_emits = {}
         return {}
+
+    def _wait_and_record(self) -> None:
+        """Block on ``last_batch_future`` and durably reconcile its result.
+
+        Every call site that previously did a bare ``self.last_batch_future
+        .result()`` (to propagate a prior batch's write exception) now routes
+        through here, so ``FlushResult`` from that batch — which columns
+        actually landed on disk, and their physical dtypes — always gets
+        folded into ``_partition_manifest`` / ``_attempted_columns`` /
+        ``_ever_written_columns`` / ``_column_schema_by_file`` before we ever
+        move on. This runs synchronously on the calling thread (never inside
+        a ``Future`` done-callback), which avoids a race against the
+        notify-then-invoke-callbacks ordering in ``concurrent.futures``.
+
+        A no-op (aside from exception propagation) when the just-awaited
+        future wasn't a history batch flush (e.g. the one-shot configuration
+        write, which doesn't set ``_pending_flush``).
+        """
+        pending = self._pending_flush
+        self._pending_flush = None
+        result = self.last_batch_future.result()
+        if pending is None or result is None:
+            return
+        outfile, declared = pending
+        written_columns, dropped_in_flush, schema = result
+        rel = os.path.relpath(outfile, self.out_uri)
+        self._attempted_columns.update(declared)
+        self._ever_written_columns.update(written_columns)
+        self._partition_manifest[rel] = {
+            "written_columns": sorted(written_columns),
+            "dropped_in_flush": sorted(dropped_in_flush),
+        }
+        for col, dtype in schema.items():
+            self._column_schema_by_file.setdefault(col, {})[rel] = dtype
 
     def _drop_column(self, k: str) -> None:
         """Permanently drop a column that can't be stored (irreconcilable inner
@@ -1283,8 +1374,8 @@ class ParquetEmitter(Emitter):
         """
         if self.num_emits % self.batch_size == 0 or not self.buffered_emits:
             return
-        # Wait for any in-flight batch first.
-        self.last_batch_future.result()
+        # Wait for any in-flight batch first (and durably reconcile it).
+        self._wait_and_record()
         rows_in_batch = self.num_emits % self.batch_size
         trimmed = {k: v[:rows_in_batch] for k, v in self.buffered_emits.items()}
         outfile = os.path.join(
@@ -1295,6 +1386,7 @@ class ParquetEmitter(Emitter):
             f"{self.num_emits}.pq",
         )
         self.filesystem.makedirs(os.path.dirname(outfile), exist_ok=True)
+        self._pending_flush = (outfile, frozenset(trimmed))
         self.last_batch_future = self.executor.submit(
             json_to_parquet, trimmed, outfile, self.pl_types, self.filesystem,
             self._history_metadata(),
@@ -1306,8 +1398,9 @@ class ParquetEmitter(Emitter):
         if self._closed:
             return
         self._flush_partial_batch()
-        # Wait for the executor's last in-flight write.
-        self.last_batch_future.result()
+        # Wait for the executor's last in-flight write (and reconcile it).
+        self._wait_and_record()
+        self._write_reconcile_manifest()
         if isinstance(self.executor, ThreadPoolExecutor):
             self.executor.shutdown(wait=True)
         if success and self.partitioning_keys:
@@ -1325,6 +1418,72 @@ class ParquetEmitter(Emitter):
             self.filesystem.makedirs(os.path.dirname(success_file))
             pl.DataFrame({"success": [True]}).write_parquet(success_file)
         self._closed = True
+
+    def _write_reconcile_manifest(self) -> None:
+        """Write the durable, machine-readable flush/close reconcile manifest.
+
+        CD2 pipeline audit §2.9 / P1-1: silent column drops and cross-file
+        schema drift in this emitter were previously surfaced only through
+        ``warnings.warn`` (:meth:`_drop_column`) or ``print`` (inside
+        :func:`json_to_parquet`, which can run on a background write thread
+        or a detached subprocess) — both vanish with nothing left to read
+        back after the run. This writes a JSON sidecar next to the history
+        Parquet files it describes, so a downstream run/report reader can
+        check for data-integrity problems without having had to watch stderr
+        live while the run was in progress.
+
+        Contains:
+
+        - ``declared_columns``: every column name ever seen in
+          ``update(state)`` this run.
+        - ``permanently_dropped_columns``: columns :meth:`_drop_column`
+          blacklisted mid-run (irreconcilable inner type across ticks).
+        - ``silently_dropped_columns``: columns that were fed into at least
+          one batch flush (i.e. buffered under a committed dtype) but never
+          once landed in a written Parquet file — a drop that
+          :func:`json_to_parquet` only used to ``print``.
+        - ``partitions``: per history file (relative to ``out_uri``), the
+          columns actually written and any columns dropped from that
+          specific flush.
+        - ``schema_drift``: for any column written with more than one
+          distinct physical dtype across this run's history files, the
+          per-file dtype it landed with.
+
+        No-op when nothing was ever flushed to disk (nothing to reconcile).
+        Best-effort: a failure writing the manifest itself never fails
+        ``close()`` — the manifest is diagnostic, not part of the actual
+        simulation data.
+        """
+        if not self._partition_manifest:
+            return
+        silently_dropped = sorted(
+            self._attempted_columns
+            - self._ever_written_columns
+            - self._dropped_cols
+        )
+        schema_drift = {
+            col: dict(files)
+            for col, files in self._column_schema_by_file.items()
+            if len(set(files.values())) > 1
+        }
+        manifest = {
+            "declared_columns": sorted(self._declared_columns),
+            "permanently_dropped_columns": sorted(self._dropped_cols),
+            "silently_dropped_columns": silently_dropped,
+            "partitions": self._partition_manifest,
+            "schema_drift": schema_drift,
+        }
+        history_dir = os.path.join(
+            self.out_uri, self.experiment_id or "default", "history",
+            self.partitioning_path,
+        )
+        manifest_path = os.path.join(history_dir, "_reconcile.json")
+        try:
+            self.filesystem.makedirs(history_dir, exist_ok=True)
+            with self.filesystem.open(manifest_path, "w") as f:
+                f.write(json.dumps(manifest, indent=2, sort_keys=True))
+        except OSError:
+            pass
 
     @staticmethod
     def flush_all_in_composite(composite: Any, success: bool = True) -> int:
@@ -1388,7 +1547,7 @@ class ParquetEmitter(Emitter):
         # Flush so unwritten rows are visible.
         if not self._closed:
             self._flush_partial_batch()
-            self.last_batch_future.result()
+            self._wait_and_record()
         history_dir = os.path.join(
             self.out_uri, self.experiment_id or "default", "history",
         )
