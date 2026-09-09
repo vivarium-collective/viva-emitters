@@ -178,3 +178,43 @@ def test_next_generation_check_group_finds_parent(tmp_path):
 
     arrays = _arrays(store)
     assert any(k.endswith("generation=3") for k in arrays), "generation 3 missing"
+
+
+def test_zero_row_close_does_not_crash(tmp_path):
+    """A generation that never emitted (division on the first tick, a
+    subsample interval longer than the generation) used to die inside the
+    terminal flush: truncate-to-zero then ``get_time(-1)`` on a zero-length
+    time coordinate -> IndexError out of ``close()``. An empty append is a
+    no-op; whether a zero-emit generation is acceptable is the DRIVER's
+    policy call, not an uncontrolled crash in zarr."""
+    core = allocate_core()
+    store = str(tmp_path / "zero.zarr")
+    emitter = XArrayEmitter(_config(store, "0"), core=core)
+    emitter.close(success=True)  # must not raise
+
+
+def test_advancing_off_a_zero_row_generation_refuses_clearly(tmp_path):
+    """A lineage store cannot represent a gap generation (the next
+    generation's _check_group needs the parent's time coordinate), so
+    advancing off a zero-emit generation must refuse with a message naming
+    the situation -- not IndexError/KeyError from deep inside zarr.
+    Generation 1's rows stay durably on disk either way."""
+    core = allocate_core()
+    store = str(tmp_path / "zero_mid.zarr")
+    agent_id = "0"
+    emitter = XArrayEmitter(_config(store, agent_id), core=core)
+    for t in range(N_EMITS_PER_GEN):
+        emitter.update({
+            "global_time": float(t),
+            "agents": {agent_id: {"listeners": {"mass": 10.0 + t}}},
+        })
+    agent_id = _daughter(agent_id)
+    emitter.advance_generation(agent_id=agent_id, success=True)
+    # generation 2: zero emits, then try to advance off it
+    with pytest.raises(RuntimeError, match="ZERO rows"):
+        emitter.advance_generation(agent_id=_daughter(agent_id), success=True)
+    arrays = _arrays(store)
+    gen1 = {k: a for k, a in arrays.items() if k.endswith("generation=1")}
+    assert gen1, "generation 1's data must still be on disk"
+    for a in gen1.values():
+        assert a.shape[0] == N_EMITS_PER_GEN

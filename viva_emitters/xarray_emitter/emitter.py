@@ -167,6 +167,22 @@ class XArrayEmitter(BufferedEmitter):
             self.flush(final=True)
             self._flushed = True
         if self.writer is not None and self.writer._buffer is not None:
+            if self.writer.num_writes <= 0:
+                # A generation with zero writes has no group in the store, so
+                # the NEXT generation's open would fail _check_group on the
+                # missing parent time coordinate anyway -- as an obscure
+                # KeyError deep inside zarr. Refuse here instead, naming the
+                # generation, so the driver's zero-emit policy (e.g.
+                # v2ecoli's _assert_generation_emitted) is what the operator
+                # sees, not a storage-layer stack trace.
+                raise RuntimeError(
+                    f"advance_generation: the current generation "
+                    f"(agent_id={(self._config.get('metadata') or {}).get('agent_id')!r}) "
+                    f"emitted ZERO rows since it opened; a lineage store "
+                    f"cannot represent a gap generation, and the next "
+                    f"generation's open would crash on the missing parent. "
+                    f"Refusing to advance -- the driver should refuse a "
+                    f"zero-emit generation before finalizing it.")
             if success:
                 self.writer.mark_success()
             self.writer.close()
@@ -260,6 +276,20 @@ class XArrayEmitter(BufferedEmitter):
         if self.writer._buffer is None:
             # store not yet opened (no metadata was provided at construction)
             return
+        if final and self.transducer.buf_tix == 0:
+            # Nothing buffered since the last append: a generation that never
+            # emitted (division on the first tick, a subsample interval longer
+            # than the generation, a predicate that filtered every row).
+            # Unguarded, the terminal write truncates the buffer to zero rows
+            # and then builds its step reference from ``get_time(buf_tix - 1)``
+            # — an IndexError on a zero-length time coordinate, deep inside
+            # zarr, out of ``close()``/``advance_generation()``. ``query()``
+            # already guards this same call with ``buf_tix > 0``; the terminal
+            # paths get the identical guard here. An empty append is a no-op
+            # by definition — whether a zero-emit GENERATION is acceptable is
+            # the driver's policy call (v2ecoli's lineage driver refuses it
+            # loudly), not a place for an uncontrolled crash.
+            return
         self.writer.write(self.transducer, final=final)
 
     def update(self, state: dict[str, Any]) -> dict:
@@ -298,7 +328,8 @@ class XArrayEmitter(BufferedEmitter):
             self.flush(final=True)
             self._flushed = True
         if self.writer is not None and self.writer._buffer is not None:
-            if success:
+            # Same zero-write guard as advance_generation: nothing to mark.
+            if success and self.writer.num_writes > 0:
                 self.writer.mark_success()
             self.writer.close()
         self.finalized = True
