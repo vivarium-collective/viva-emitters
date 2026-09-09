@@ -51,6 +51,10 @@ class XArrayEmitter(BufferedEmitter):
 
     def __init__(self, config: dict[str, Any], core: Any) -> None:
         self.validate_config(config)
+        #: The emitter's own config, retained so :py:meth:`.advance_generation`
+        #: can rebuild the buffering pipeline for the next generation of a
+        #: lineage from the same emitter instance.
+        self._config: dict[str, Any] = config
         self.debug: bool = bool(config.get("debug", False))
         #: Partition strategy: "flat" (default, generic Step) or "colony"
         #: (v2ecoli lineage layout). Selects how `extract_partition` reads
@@ -75,11 +79,7 @@ class XArrayEmitter(BufferedEmitter):
         # Unconditionally build the transducer and writer. Tests that only
         # exercise the validator path should supply a minimum-valid transducer
         # config (see the `minimal_xarray_config` fixture in tests/conftest.py).
-        self.transducer = XarrayTransducer(config, debug=self.debug)
-        self.writer = AsyncBufferWriter.dispatch(config["writer"])
-        # Provenance is written to the store's ROOT attrs at finalize time,
-        # by the writer, so it survives the async buffer + consolidation.
-        self.writer.provenance = self._provenance
+        self._build_writer_and_transducer()
 
         # Call the BufferedEmitter base __init__ AFTER setting up attributes
         # (per the upstream warning that __init__ must be called at the end).
@@ -88,16 +88,114 @@ class XArrayEmitter(BufferedEmitter):
         # vivarium's "configuration" emit happens here at construction time
         # when metadata is available. validate_metadata is called before
         # transducer.alloc so a validator mismatch raises ValueError early.
-        metadata = dict(config.get("metadata") or {})
+        self._alloc_and_open(dict(config.get("metadata") or {}))
+
+    def _build_writer_and_transducer(self) -> None:
+        """Allocate a fresh transducer + writer pair from :py:attr:`._config`.
+
+        Called at construction and again by :py:meth:`.advance_generation` for
+        each new generation of a lineage (each generation is a fresh single-use
+        buffering pipeline over the SAME per-lineage store).
+        """
+        self.transducer = XarrayTransducer(self._config, debug=self.debug)
+        self.writer = AsyncBufferWriter.dispatch(self._config["writer"])
+        # Provenance is written to the store's ROOT attrs at finalize time,
+        # by the writer, so it survives the async buffer + consolidation.
+        self.writer.provenance = self._provenance
+
+    def _alloc_and_open(self, metadata: dict[str, Any]) -> None:
+        """Allocate this generation's buffer and open its partition in the store.
+
+        When ``metadata`` is empty the store is left unopened (the store-less
+        validator/test path); :py:meth:`.flush` and :py:meth:`.close` tolerate
+        that. Otherwise the partition (``experiment_id``/``variant``/
+        ``lineage_seed``, and — under the ``colony`` strategy — the
+        ``agent_id`` that fixes ``generation``) is derived and the writer opens
+        the corresponding ``generation=N`` partition in the per-lineage store.
+        """
+        self._flushed = False
+        self._closed = False
         if metadata:
             self.validate_metadata(metadata)
             partition = self.extract_partition(metadata)
             extracted_meta = self.extract_metadata(metadata)
-            coords = config.get("output_metadata") or {}
+            coords = self._config.get("output_metadata") or {}
             self.transducer.alloc(
                 partition=partition, metadata=extracted_meta, coords=coords,
             )
             self.writer.open_store(self.transducer.buffer)
+
+    def advance_generation(
+        self, *, agent_id: str | None = None,
+        metadata: dict[str, Any] | None = None, success: bool = True,
+    ) -> None:
+        """Finalize the current generation and open the next one, in place.
+
+        A lineage is driven by a SINGLE emitter: call :py:meth:`update` for a
+        generation's history, then ``advance_generation`` at the division
+        event, then :py:meth:`update` for the daughter, and so on, ending the
+        lineage with :py:meth:`close`.
+
+        The current generation is finalized *first* and unconditionally — its
+        trailing (possibly sub-``buffer_size``) buffer is flushed, the cell
+        division event (``success``) is marked, and consolidated metadata is
+        written — so it is durably on disk before the next generation opens.
+        This is the guarantee the old per-generation-emitter flow lacked: its
+        driver wrapped ``close()`` in ``except AssertionError: pass``, so a
+        generation that failed to persist left the store as bare group
+        skeletons and crashed the next generation's ``_check_group``.
+
+        Args:
+          agent_id: Phylogeny key of the next generation (``generation ==
+                    len(agent_id)`` under the colony strategy). Updates the
+                    ``agent_id`` in both the stored metadata and the
+                    agent-keyed ``emit_root`` so the daughter's payload is read
+                    correctly. Ignored when ``metadata`` is given explicitly.
+          metadata: Full metadata for the next generation. When omitted it is
+                    derived from the emitter's config with ``agent_id`` applied.
+          success:  Whether the finished generation reached its division event
+                    (marks the ``division_reached`` attr the next generation's
+                    ``_check_group`` requires). Defaults to ``True`` — a
+                    generation you advance off of divided by definition.
+        """
+        if self.finalized or self._closed:
+            raise RuntimeError(
+                f"`{type(self).__name__}.advance_generation()` called after "
+                f"the lineage was closed.")
+        # 1. GUARANTEED finalize of the current generation (never swallowed).
+        if not self._flushed:
+            self.flush(final=True)
+            self._flushed = True
+        if self.writer is not None and self.writer._buffer is not None:
+            if success:
+                self.writer.mark_success()
+            self.writer.close()
+
+        # 2. Resolve the next generation's metadata + agent-keyed emit_root.
+        if metadata is None:
+            metadata = dict(self._config.get("metadata") or {})
+            if agent_id is not None:
+                metadata["agent_id"] = agent_id
+                # Keep an optional caller-tracked ``generation`` field (the
+                # colony ``generation == len(agent_id)``) consistent with the
+                # new agent_id, so the stored metadata attr is not stale for
+                # generation > 1. Only touched when the caller already carries
+                # it (the storage partition itself derives generation from
+                # agent_id regardless).
+                if "generation" in metadata:
+                    metadata["generation"] = len(agent_id)
+        self._config["metadata"] = metadata
+        if agent_id is not None and self._config.get("emit_root"):
+            # the colony emit_root is ["agents", <agent_id>]; retarget its
+            # agent element so the daughter's payload is stripped correctly.
+            new_root = list(self._config["emit_root"])
+            new_root[-1] = agent_id
+            self._config["emit_root"] = new_root
+
+        # 3. Rebuild the pipeline and open the next generation in the same store.
+        self._build_writer_and_transducer()
+        self.finalized = False
+        self._alloc_and_open(metadata)
 
     @classmethod
     def validate_config(cls, config: dict[str, Any]) -> None:
