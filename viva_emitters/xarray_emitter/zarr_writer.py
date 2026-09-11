@@ -583,6 +583,62 @@ class AsyncZarrBufferWriter(AsyncBufferWriter[ZarrStore]):
                     f"    {parent.success_attr_name}")
         return group
 
+    def _open_group_live(self) -> Group:
+        """
+        Open the substore reading the LIVE store directory, bypassing consolidated
+        metadata. Used to heal a stale/incomplete on-disk manifest at open time.
+
+        Called by: :py:meth:`._open_checked_group`.
+        """
+        return zarr.open_group(
+            self.config["store"],
+            path=str(self.partition.independent_path),
+            zarr_format=self.config["backend_config"]["format"],
+            # read the actual directory, not the (possibly stale) manifest
+            use_consolidated=False,
+            mode="a",
+        )
+
+    def _open_checked_group(self) -> Group:
+        """
+        Open the substore and validate the prior generation is reachable, HEALING a
+        stale or incomplete on-disk consolidated manifest.
+
+        Generation N>1 finds generation N-1's arrays only through the consolidated
+        manifest (``_open_group`` uses ``use_consolidated=True``). On the multi-seed
+        ray-mnp gang that manifest has been observed stale/incomplete when the next
+        generation opens -- its :py:meth:`._check_group` then raises
+        ``FileNotFoundError`` "Missing path from previous generation" even though the
+        prior generation's data is physically on the store. (The root of the
+        staleness -- an S3 manifest write/read gap vs an incremental-reconsolidate
+        miss -- does not change the remedy.)
+
+        When the manifest-based check fails, re-derive from the LIVE store: if the
+        prior generation IS present there, the manifest was merely incomplete --
+        rebuild it fully (so this open AND every later ``reconsolidate`` built on the
+        cached value start from the truth) and re-open. A prior generation genuinely
+        absent from the live store re-raises: a generation that never persisted is a
+        real error, not a manifest gap.
+
+        Called by: :py:meth:`._open_store`.
+        """
+        try:
+            return self._check_group(self._open_group())
+        except FileNotFoundError:
+            if self.partition.generation == 1:
+                raise
+            # Re-validate against the live directory. _check_group re-raises the
+            # SAME FileNotFoundError here if the prior generation is truly absent
+            # (never persisted) -- that is the real-error path, left untouched.
+            live = self._open_group_live()
+            self._check_group(live)
+            # Prior generation IS on the store; the manifest was stale/incomplete.
+            # Rebuild it fully from the live store, then re-open so the returned
+            # group carries the now-complete consolidated metadata.
+            with filter_warnings(self._warnings_make_effect):
+                sync(consolidate_metadata(live._async_group))
+            return self._check_group(self._open_group())
+
     def _cache_consolidated_metadata(self, group: Group) -> Group:
         """
         Read consolidated metadata from persistent storage, and hide it from the
@@ -639,7 +695,7 @@ class AsyncZarrBufferWriter(AsyncBufferWriter[ZarrStore]):
         })
         return ZarrStore(
             self._cache_consolidated_metadata(
-                self._check_group(self._open_group())),
+                self._open_checked_group()),
             # only allow appending along time axis
             mode="a-",
             # manage cache updates in `self.update_transport()`
