@@ -43,6 +43,23 @@ from .storage import VariableSpec, VariableEncoding
 
 
 # ==============================================================================
+# LINEAGE_DEBUG instrumentation (temporary, env-gated)
+# ==============================================================================
+# Set env LINEAGE_DEBUG=1 to trace the per-generation consolidate/open path that
+# the multi-seed-gang `_check_group` "Missing path from previous generation"
+# residual travels (v2ecoli #782 follow-up, Gate A). Pure stderr logging; when
+# the env var is unset this is a no-op and behaviour is byte-identical to the
+# v0.4.0 release. Remove this block once the root is confirmed + fixed.
+
+_LINEAGE_DEBUG: bool = os.environ.get("LINEAGE_DEBUG", "") not in ("", "0", "false", "False")
+
+
+def _ldbg(msg: str) -> None:
+    if _LINEAGE_DEBUG:
+        print(f"[LINEAGE_DEBUG] {msg}", file=sys.stderr, flush=True)
+
+
+# ==============================================================================
 # constants
 # ==============================================================================
 
@@ -572,6 +589,34 @@ class AsyncZarrBufferWriter(AsyncBufferWriter[ZarrStore]):
             try:
                 assert isinstance(group[parent.time_coo_name], Array)
             except KeyError:
+                if _LINEAGE_DEBUG:
+                    # THE DISCRIMINATOR: is the parent time coord missing only
+                    # from the consolidated manifest (consolidate/S3 write gap),
+                    # or missing from the live store too (the gen never
+                    # persisted)? Dump both views before raising.
+                    try:
+                        cm = group.metadata.consolidated_metadata
+                        man_keys = sorted(cm.metadata.keys()) if cm is not None else None
+                        _ldbg(
+                            f"_check_group MISS gen={self.partition.generation} "
+                            f"want={parent.time_coo_name!r} "
+                            f"manifest_is_none={cm is None} "
+                            f"manifest_keys={man_keys}")
+                    except Exception as e:  # noqa: BLE001
+                        _ldbg(f"_check_group manifest dump FAILED: {type(e).__name__}: {e}")
+                    try:
+                        live = zarr.open_group(
+                            self.config["store"],
+                            path=str(self.partition.independent_path),
+                            zarr_format=self.config["backend_config"]["format"],
+                            use_consolidated=False, mode="r")
+                        on_store = parent.time_coo_name in [n for n, _ in live.members()]
+                        _ldbg(
+                            f"_check_group live-store(use_consolidated=False) "
+                            f"has_parent_time_coo={on_store} "
+                            f"-> {'MANIFEST/S3 write gap' if on_store else 'gen never persisted'}")
+                    except Exception as e:  # noqa: BLE001
+                        _ldbg(f"_check_group live-store dump FAILED: {type(e).__name__}: {e}")
                 raise FileNotFoundError(
                     f"({type(self).__name__})\n"
                     f"  Missing path from previous generation:\n"
@@ -883,7 +928,40 @@ class AsyncZarrBufferWriter(AsyncBufferWriter[ZarrStore]):
                 async_group: AsyncGroup = _replace_consolidated_metadata(
                     self.group._async_group, self.consolidated_metadata)
                 # combine with metadata for new paths
-                sync(reconsolidate_metadata(
-                    async_group,
-                    set(map(self.to_zarr_path, self.buffer.modified_paths)),
-                    set(map(self.to_zarr_path, self.buffer.added_paths))))
+                modified = set(map(self.to_zarr_path, self.buffer.modified_paths))
+                added = set(map(self.to_zarr_path, self.buffer.added_paths))
+                if _LINEAGE_DEBUG:
+                    # The next generation's _check_group looks for THIS gen's
+                    # time-coordinate array via the consolidated manifest, so log
+                    # whether it is among the paths this reconsolidate will fold
+                    # in. Its absence here is the direct cause of the downstream
+                    # "Missing path from previous generation" crash.
+                    tcn = self.partition.time_coo_name
+                    _ldbg(
+                        f"consolidate gen={self.partition.generation} "
+                        f"seed={self.partition.independent_path} "
+                        f"time_coo={tcn!r} "
+                        f"in_added={tcn in added} in_modified={tcn in modified} "
+                        f"n_added={len(added)} n_modified={len(modified)} "
+                        f"added_sample={sorted(added)[:8]}")
+                sync(reconsolidate_metadata(async_group, modified, added))
+                if _LINEAGE_DEBUG:
+                    # Re-read the manifest we just wrote and confirm this gen's
+                    # time coord is actually in it (post-reconsolidate, pre-open).
+                    try:
+                        chk = zarr.open_group(
+                            self.config["store"],
+                            path=str(self.partition.independent_path),
+                            zarr_format=self.config["backend_config"]["format"],
+                            use_consolidated=True, mode="r")
+                        cm = chk.metadata.consolidated_metadata
+                        present = cm is not None and (
+                            self.partition.time_coo_name in cm.metadata)
+                        _ldbg(
+                            f"post-reconsolidate gen={self.partition.generation} "
+                            f"manifest_has_time_coo={present} "
+                            f"manifest_is_none={cm is None}")
+                    except Exception as e:  # noqa: BLE001 - diagnostic only
+                        _ldbg(
+                            f"post-reconsolidate gen={self.partition.generation} "
+                            f"re-read FAILED: {type(e).__name__}: {e}")
