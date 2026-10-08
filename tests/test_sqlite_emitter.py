@@ -166,6 +166,63 @@ def test_sqlite_emitter_subsample(core):
     assert steps == [0, 5, 10, 15]
 
 
+def test_sqlite_emitter_subsample_keys_off_global_time(core):
+    """A tick is a distinct ``global_time``, not an ``update()`` call.
+
+    The emitter is a Step re-enqueued whenever its inputs change, so a
+    multi-rate composite can call ``update()`` several times at one
+    ``global_time``. Subsampling must key off the model time: each distinct
+    ``global_time`` is one tick, repeated-time re-fires are not recorded
+    twice, and the ``subsample`` stride (and the ``step`` column) follows the
+    real time axis rather than the emit-event count.
+    """
+    tmp = tempfile.mkdtemp(prefix='sqlite_subsample_gt_')
+    e = SQLiteEmitter({
+        'emit': {'global_time': 'node', 'v': 'node'},
+        'file_path': tmp, 'simulation_id': 'sim',
+        'subsample': 2,
+    }, core=core)
+
+    # 5 distinct model times, but each one is emitted three times (a
+    # multi-rate composite re-firing the emitter at the same global_time).
+    for t in range(5):
+        for _ in range(3):
+            e.update({'global_time': float(t), 'v': t})
+    e.close()
+
+    history = load_history(os.path.join(tmp, 'history.db'), 'sim')
+    # Ticks are model times 0,1,2,3,4; subsample=2 keeps ticks 0,2,4 — one row
+    # each, NOT nine rows that the old per-call counting would have produced.
+    assert [row['global_time'] for row in history] == [0.0, 2.0, 4.0]
+    assert [row['v'] for row in history] == [0, 2, 4]
+
+    conn = sqlite3.connect(os.path.join(tmp, 'history.db'))
+    try:
+        steps = [r[0] for r in conn.execute(
+            'SELECT step FROM history WHERE simulation_id = ? ORDER BY step',
+            ('sim',),
+        ).fetchall()]
+    finally:
+        conn.close()
+    # step column counts distinct model-time ticks (0,1,2,3,4), kept at 0,2,4.
+    assert steps == [0, 2, 4]
+
+
+def test_sqlite_emitter_without_global_time_counts_calls(core):
+    """When ``global_time`` is not wired, fall back to per-call tick counting
+    so a composite with no time axis still records every update."""
+    tmp = tempfile.mkdtemp(prefix='sqlite_no_gt_')
+    e = SQLiteEmitter({
+        'emit': {'v': 'node'},
+        'file_path': tmp, 'simulation_id': 'sim',
+    }, core=core)
+    for i in range(4):
+        e.update({'v': i})       # no global_time key
+    e.close()
+    history = load_history(os.path.join(tmp, 'history.db'), 'sim')
+    assert [row['v'] for row in history] == [0, 1, 2, 3]
+
+
 def test_sqlite_emitter_subsample_rejects_bad_value(core):
     """subsample < 1 is rejected at construction time."""
     tmp = tempfile.mkdtemp(prefix='sqlite_subsample_bad_')

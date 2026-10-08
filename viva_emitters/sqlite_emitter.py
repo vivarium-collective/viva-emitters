@@ -346,20 +346,35 @@ class SQLiteEmitter(Emitter):
             save_simulation_metadata(self.db_path, self.simulation_id, name=name)
 
         self._step = 0
+        self._last_global_time = None
         self._batch = []
 
     def update(self, state) -> Dict:
         if self._conn is None:
             raise RuntimeError('SQLiteEmitter has been closed')
-        # Advance the true composite tick counter on every call; only persist
-        # the row when this tick falls on the subsample cadence. Ticks 0,
-        # subsample, 2*subsample, ... are written (first tick always kept).
+        global_time = state.get('global_time') if isinstance(state, dict) else None
+        # Subsample by model time (``global_time``), not by emit-event count.
+        # The emitter is a Step re-enqueued whenever its inputs change, so a
+        # multi-rate composite — or an emitter wired to ``global_time`` so it
+        # fires on every advance — can call ``update()`` several times at one
+        # ``global_time``. Counting those calls would over-count ticks and make
+        # the ``subsample`` stride (and the ``step`` column) drift away from the
+        # real time axis. Advance the tick counter only when ``global_time``
+        # actually changes, and never record the same model time twice. When
+        # ``global_time`` is not wired (None), fall back to per-call counting so
+        # a composite with no time axis still records every tick.
+        if global_time is not None:
+            if global_time == self._last_global_time:
+                return {}
+            self._last_global_time = global_time
+        # Advance the true composite tick counter; only persist the row when
+        # this tick falls on the subsample cadence. Ticks 0, subsample,
+        # 2*subsample, ... are written (first tick always kept).
         step = self._step
         self._step += 1
         if step % self.subsample != 0:
             return {}
 
-        global_time = state.get('global_time') if isinstance(state, dict) else None
         # Strip live Edge/process instances the same way RAMEmitter does;
         # otherwise wires that pull in process objects break JSON serialization.
         clean = _tree_copy(state)
