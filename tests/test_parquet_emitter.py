@@ -34,12 +34,14 @@ from viva_emitters.parquet_emitter import (
     _split_structured_arrays,
     create_duckdb_conn,
     flatten_dict,
+    json_to_parquet,
     list_columns,
     named_idx,
     ndidx_to_duckdb_expr,
     np_dtype,
     quote_columns,
     union_pl_dtypes,
+    url_to_fs,
 )
 
 
@@ -884,3 +886,106 @@ class TestParquetEmitterIntegration:
         assert manifest["partitions"], "no partition files recorded"
         for partition in manifest["partitions"].values():
             assert partition["dropped_in_flush"] == []
+
+
+# ============================================================================
+# Concurrent shared-history-dir race (#46).
+#
+# ``ParquetEmitter._write_configuration`` clears the run's history partition at
+# construction (clean-slate so a fresh run doesn't inherit a prior run's stale
+# ``*.pq`` files). When two emitters are built against the SAME out_dir + hive
+# partition, the second emitter's construction must NOT destroy the first's
+# in-flight write-then-rename (``json_to_parquet``: write ``*.pq.tmp`` →
+# ``filesystem.mv`` to ``*.pq``). The old code recursive-deleted the whole
+# partition dir, wiping the in-flight ``.tmp`` and the mv target dir, so the
+# first emitter's ``mv`` crashed with an unrecoverable ``FileNotFoundError``
+# (v2ecoli#677). These tests pin both halves of the fix WITHOUT relying on
+# thread timing.
+# ============================================================================
+
+
+class TestConcurrentHistoryDirRace:
+    @pytest.fixture
+    def temp_dir(self):
+        tmp = tempfile.mkdtemp(prefix="parquet_emitter_race_")
+        yield tmp
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_construction_preserves_concurrent_inflight_temp(self, temp_dir, core):
+        """A 2nd emitter's clean-slate must keep a concurrent emitter's in-flight
+        ``*.pq.tmp`` (and the partition dir) while still clearing stale ``*.pq``.
+        """
+        config = {
+            "out_dir": temp_dir,
+            "batch_size": 400,
+            "threaded": False,
+            "partitioning_keys": ["experiment_id"],
+            "metadata": {"experiment_id": "race"},
+        }
+        a = ParquetEmitter(config=dict(config), core=core)
+        a.last_batch_future.result()
+
+        hist = os.path.join(a.out_uri, "race", "history", "experiment_id=race")
+        os.makedirs(hist, exist_ok=True)
+        stale = os.path.join(hist, "400.pq")  # leftover finalized file
+        inflight = os.path.join(hist, "800.pq.tmp")  # a concurrent write, mid-flight
+        pl.DataFrame({"x": [1]}).write_parquet(stale)
+        pl.DataFrame({"x": [2]}).write_parquet(inflight)
+
+        # Second emitter against the SAME out_dir + partition — the #46 collision.
+        b = ParquetEmitter(config=dict(config), core=core)
+        b.last_batch_future.result()
+
+        assert os.path.exists(inflight), (
+            "second emitter's clean-slate wiped a concurrent emitter's in-flight "
+            "*.pq.tmp — the #46 destructive race"
+        )
+        assert os.path.isdir(hist), (
+            "history dir removed out from under a concurrent in-flight mv target"
+        )
+        assert not os.path.exists(stale), (
+            "clean-slate regressed: stale prior-run *.pq no longer cleared"
+        )
+
+        a.close(success=False)
+        b.close(success=False)
+
+    def test_json_to_parquet_survives_concurrent_dir_delete(self, temp_dir):
+        """``json_to_parquet`` must not surface an unrecoverable FileNotFoundError
+        when a concurrent emitter's clean-slate deletes the target dir between
+        ``write_parquet`` and ``mv``; the in-memory batch is re-written instead.
+        """
+        real_fs, _ = url_to_fs(temp_dir)
+        outdir = os.path.join(temp_dir, "exp", "history", "experiment_id=1")
+        os.makedirs(outdir, exist_ok=True)
+        outfile = os.path.join(outdir, "800.pq")
+
+        class RacyFS:
+            """Delegates to the real fs but, on the FIRST ``mv``, recursive-deletes
+            the target partition dir (as a 2nd emitter's ``_write_configuration``
+            would) so the original ``mv`` raises FileNotFoundError on a vanished
+            ``*.pq.tmp``."""
+
+            def __init__(self, fs):
+                self._fs = fs
+                self.mv_calls = 0
+
+            def __getattr__(self, name):
+                return getattr(self._fs, name)
+
+            def mv(self, src, dst, **kwargs):
+                self.mv_calls += 1
+                if self.mv_calls == 1:
+                    self._fs.delete(os.path.dirname(dst), recursive=True)
+                return self._fs.mv(src, dst, **kwargs)
+
+        emit = {"time": np.array([1.0, 2.0]), "value": np.array([10, 20])}
+        schema = {"time": pl.Float64, "value": pl.Int64}
+        fs = RacyFS(real_fs)
+
+        json_to_parquet(emit, outfile, schema, fs)  # must not raise
+
+        assert os.path.exists(outfile), "batch lost after a concurrent dir delete"
+        df = pl.read_parquet(outfile)
+        assert df["value"].to_list() == [10, 20]
+        assert fs.mv_calls >= 2, "expected a retry after the raced delete"
