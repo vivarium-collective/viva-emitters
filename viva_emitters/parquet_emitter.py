@@ -161,15 +161,35 @@ def json_to_parquet(
     temp_outfile = outfile
     if parse.urlparse(outfile).scheme in ("", "file", "local"):
         temp_outfile = outfile + ".tmp"
-    tbl.write_parquet(
-        temp_outfile,
-        # File-level key/value metadata (column units, etc.).
-        metadata=metadata or None,
-        # Increase retry attempts to handle S3/GCS failures
-        storage_options={"max_retries": 50, "retry_timeout_ms": 300000},
-    )
-    if temp_outfile != outfile:
-        filesystem.mv(temp_outfile, outfile)
+    # A SECOND emitter constructed against the same out_dir + hive partition
+    # clears this partition at construction (``_write_configuration``'s
+    # clean-slate). If that delete lands between our ``write_parquet`` and
+    # ``mv`` — or removes the parent dir mid-write — the ``*.pq.tmp`` or its
+    # directory vanishes and the write/rename raises ``FileNotFoundError``
+    # (v2ecoli#677, viva-emitters#46). ``tbl`` is still in memory, so recreate
+    # the parent directory and rewrite once; only a second failure is genuine,
+    # unrecoverable data loss and is re-raised.
+    for attempt in range(2):
+        try:
+            tbl.write_parquet(
+                temp_outfile,
+                # File-level key/value metadata (column units, etc.).
+                metadata=metadata or None,
+                # Increase retry attempts to handle S3/GCS failures
+                storage_options={"max_retries": 50, "retry_timeout_ms": 300000},
+            )
+            if temp_outfile != outfile:
+                filesystem.mv(temp_outfile, outfile)
+            break
+        except (FileNotFoundError, OSError):
+            if attempt == 1:
+                raise
+            parent = os.path.dirname(outfile)
+            if parent:
+                try:
+                    filesystem.makedirs(parent, exist_ok=True)
+                except OSError:
+                    pass
     return FlushResult(
         written_columns=list(tbl.columns),
         dropped=dropped,
@@ -1130,6 +1150,36 @@ class ParquetEmitter(Emitter):
             parts.append(f"{key}={metadata[key]}")
         return os.path.join(*parts)
 
+    def _clear_stale_outputs(self, dirpath: str) -> None:
+        """Clear a prior run's finalized outputs from ``dirpath`` in place.
+
+        The clean-slate at construction exists so a fresh run doesn't inherit
+        a previous run's stale ``*.pq`` partition files (a shorter re-run would
+        otherwise leave orphaned high-index files that DuckDB's hive query
+        would still union in). The old implementation recursive-*deleted the
+        directory itself*, which — when a SECOND emitter is built against the
+        same out_dir + hive partition — wiped a concurrent emitter's in-flight
+        ``*.pq.tmp`` and the directory its ``mv`` targets, crashing the first
+        emitter's write with ``FileNotFoundError`` (viva-emitters#46).
+
+        Instead: keep the directory, delete its finalized entries one by one
+        (tolerating a vanishing entry), and NEVER touch ``*.pq.tmp`` — an
+        in-flight write-then-rename another thread/process owns. A missing dir
+        is a no-op. Single-emitter clean-slate is unchanged (its only entries
+        are the prior run's finalized files, which still get removed).
+        """
+        try:
+            entries = self.filesystem.ls(dirpath, detail=False)
+        except (FileNotFoundError, OSError):
+            return
+        for entry in entries:
+            if str(entry).endswith(".tmp"):
+                continue
+            try:
+                self.filesystem.delete(entry, recursive=True)
+            except (FileNotFoundError, OSError):
+                pass
+
     def _write_configuration(self, metadata: dict[str, Any]) -> None:
         """Write the one-shot configuration parquet from ``metadata``."""
         self.experiment_id = str(metadata.get("experiment_id", "default"))
@@ -1155,22 +1205,22 @@ class ParquetEmitter(Emitter):
             self.partitioning_path,
             "config.pq",
         )
-        try:
-            self.filesystem.delete(os.path.dirname(outfile), recursive=True)
-        except (FileNotFoundError, OSError):
-            pass
-        self.filesystem.makedirs(os.path.dirname(outfile))
+        # Clean-slate the config partition WITHOUT recursive-deleting the dir
+        # itself (another emitter sharing this partition may be mid-write); see
+        # ``_clear_stale_outputs`` (viva-emitters#46).
+        self.filesystem.makedirs(os.path.dirname(outfile), exist_ok=True)
+        self._clear_stale_outputs(os.path.dirname(outfile))
         self.last_batch_future = self.executor.submit(
             json_to_parquet, config_emit, outfile, config_schema, self.filesystem,
         )
-        # Clear out any old history files for this partition.
+        # Clear out any old history files for this partition — again in place,
+        # preserving a concurrent emitter's in-flight ``*.pq.tmp`` and the dir
+        # its ``mv`` targets.
         history_outdir = os.path.join(
             self.out_uri, self.experiment_id, "history", self.partitioning_path,
         )
-        try:
-            self.filesystem.delete(history_outdir, recursive=True)
-        except (FileNotFoundError, OSError):
-            pass
+        self.filesystem.makedirs(history_outdir, exist_ok=True)
+        self._clear_stale_outputs(history_outdir)
 
     def _history_metadata(self) -> dict[str, str] | None:
         """File-level Parquet metadata for history files.
