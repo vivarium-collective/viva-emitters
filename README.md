@@ -43,6 +43,11 @@ Reader helpers for the Parquet datasets (`create_duckdb_conn`,
 `read_stacked_columns`, `named_idx`, `ndidx_to_duckdb_expr`, ...) are also
 re-exported from the top-level package.
 
+For reading a stored run independently of which emitter wrote it, the package
+exports `RunReader` (plus `RunRef` and `by_generation`): an emitter-agnostic
+reader that returns a uniform per-tick series for any observable across
+parquet / sqlite / xarray-zarr stores.
+
 ## Tests
 
 ```bash
