@@ -11,6 +11,7 @@ The zero-dependency built-ins — `RAMEmitter`, `ConsoleEmitter`, `JSONEmitter`
 | ---------------- | ------------ | ----------------------------------------------------- |
 | `SQLiteEmitter`  | `[sqlite]`   | One row per tick into a single `.db` file (stdlib).   |
 | `ParquetEmitter` | `[parquet]`  | Hive-partitioned Parquet dataset, batched writes.     |
+| `XArrayEmitter`  | `[xarray]`   | Zarr-backed N-dimensional dataset via xarray, unit-aware. |
 
 ## Install
 
@@ -18,11 +19,13 @@ The zero-dependency built-ins — `RAMEmitter`, `ConsoleEmitter`, `JSONEmitter`
 pip install 'viva-emitters[sqlite]'        # SQLiteEmitter only
 pip install 'viva-emitters[parquet]'       # ParquetEmitter only
 pip install 'viva-emitters[sqlite,parquet]'  # both
+pip install 'viva-emitters[xarray]'        # XArrayEmitter only
 ```
 
 The `[sqlite]` extra is empty (Python's stdlib `sqlite3` is enough); it exists
 for symmetry. The `[parquet]` extra pulls in `duckdb`, `polars`, `pyarrow`,
-`fsspec`, and `tqdm`.
+`fsspec`, and `tqdm`. The `[xarray]` extra pulls in `xarray`, `zarr`, `zarrs`,
+`bottleneck`, `pint`, and `unum`.
 
 ## Usage
 
@@ -39,6 +42,11 @@ from viva_emitters import SQLiteEmitter, ParquetEmitter
 Reader helpers for the Parquet datasets (`create_duckdb_conn`,
 `read_stacked_columns`, `named_idx`, `ndidx_to_duckdb_expr`, ...) are also
 re-exported from the top-level package.
+
+For reading a stored run independently of which emitter wrote it, the package
+exports `RunReader` (plus `RunRef` and `by_generation`): an emitter-agnostic
+reader that returns a uniform per-tick series for any observable across
+parquet / sqlite / xarray-zarr stores.
 
 ## Tests
 
