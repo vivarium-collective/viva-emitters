@@ -26,6 +26,12 @@ parquet = [
     "fsspec",
     "tqdm",
 ]
+# Lightweight single-file long-form Parquet emitter (LongFormParquetEmitter):
+# just pyarrow, none of the duckdb/polars/fsspec machinery the vEcoli-style
+# ParquetEmitter needs.
+parquet-lite = [
+    "pyarrow",
+]
 xarray = [
     "xarray>=2026.04",
     "zarr>=3.1.6,<3.4",

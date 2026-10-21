@@ -54,3 +54,10 @@ try:
     register_contract("XArrayEmitter", XArrayEmitter.emitter_contract())
 except ImportError:
     pass
+
+try:
+    from .long_form_parquet_emitter import LongFormParquetEmitter
+    register_contract("parquet-lite", LongFormParquetEmitter.emitter_contract())
+    register_contract("LongFormParquetEmitter", LongFormParquetEmitter.emitter_contract())
+except ImportError:
+    pass
