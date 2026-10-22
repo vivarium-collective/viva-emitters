@@ -66,6 +66,14 @@ except ImportError:
     pass  # [parquet] extra not installed
 
 try:
+    from viva_emitters.long_form_parquet_emitter import (  # noqa: F401
+        LongFormParquetEmitter,
+        read_long_form,
+    )
+except ImportError:
+    pass  # [parquet-lite] extra not installed (pyarrow missing)
+
+try:
     from viva_emitters.xarray_emitter import XArrayEmitter  # noqa: F401
 except (ImportError, SyntaxError):
     # ImportError: [xarray] extra not installed.
