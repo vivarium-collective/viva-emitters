@@ -276,6 +276,27 @@ _PARQUET_ID_COLS = frozenset({
 })
 _SQLITE_ID_FIELDS = frozenset({"generation", "global_time"})
 
+# Leading hive-coordinate dims the XArrayEmitter nests observables under
+# (/experiment_id=<id>/variant=0/lineage_seed=0/<emit path>). They identify the
+# run, not the observable, so the reader strips them from the observable name —
+# mirroring the parquet reader, which drops `_PARQUET_ID_COLS`.
+_XARRAY_PREFIX_DIMS = frozenset({"experiment_id", "variant", "lineage_seed"})
+
+
+def _xarray_leaf(group_path: str) -> str:
+    """The observable leaf name for a datatree group path: drop the leading
+    ``<dim>=<value>`` hive-coordinate segments, dot-join the rest.
+
+    Matched on the computed leaf (never reconstructed via ``replace(".", "/")``),
+    so a coordinate VALUE containing dots — e.g. a dotted spec id in
+    ``experiment_id=`` — does not get mis-split into spurious path segments.
+    """
+    segs = [s for s in group_path.split("/") if s]
+    i = 0
+    while i < len(segs) and "=" in segs[i] and segs[i].split("=", 1)[0] in _XARRAY_PREFIX_DIMS:
+        i += 1
+    return ".".join(segs[i:])
+
 
 class RunReader:
     """Emitter-agnostic reader that returns a uniform per-tick series.
@@ -360,6 +381,10 @@ class RunReader:
         Raises:
             KeyError: If ``observable`` is not available in this run.
         """
+        # Observable ids are dot-separated across every backend; studies and
+        # derivations declare emit paths slash-form (``exchange/cross_lineage_flux_total``).
+        # Normalise so both forms resolve (an id never legitimately contains "/").
+        observable = observable.replace("/", ".")
         if self._kind == "sqlite":
             return self._sqlite_series(observable)
         if self._kind == "parquet":
@@ -777,7 +802,7 @@ class RunReader:
 
     def _xarray_observables(self) -> list[str]:
         dt = self._xarray_open()
-        obs = []
+        obs = set()
         for path in dt.groups:
             if path == "/":
                 continue
@@ -786,7 +811,7 @@ class RunReader:
                 v.startswith("generation=") for v in node_ds.data_vars
             )
             if has_gen_vars:
-                obs.append(path.lstrip("/").replace("/", "."))
+                obs.add(_xarray_leaf(path))
         return sorted(obs)
 
     def _xarray_generations(self) -> list[int]:
@@ -795,9 +820,20 @@ class RunReader:
 
     def _xarray_series(self, observable: str) -> pl.DataFrame:
         dt = self._xarray_open()
-        node_path = "/" + observable.replace(".", "/")
-
-        if node_path not in dt.groups:
+        # Resolve by matching the computed leaf name against each group path —
+        # the SAME mapping `observables()` exposes — rather than reconstructing a
+        # path via `observable.replace(".", "/")`, which splits dots inside a hive
+        # coordinate value (e.g. a dotted spec id in experiment_id=) into spurious
+        # path segments and misses the node.
+        node_path = None
+        for path in dt.groups:
+            if path == "/":
+                continue
+            if _xarray_leaf(path) == observable:
+                if any(v.startswith("generation=") for v in dt[path].ds.data_vars):
+                    node_path = path
+                    break
+        if node_path is None:
             raise KeyError(observable)
 
         node_ds = dt[node_path].ds

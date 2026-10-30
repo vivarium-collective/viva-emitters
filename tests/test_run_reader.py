@@ -326,6 +326,46 @@ def test_xarray_unknown_observable(tmp_path):
         r.series("nonexistent.obs")
 
 
+def _make_xarray_hive(tmp_path):
+    """A store laid out like the real XArrayEmitter: observables nested under
+    the hive coordinates ``/experiment_id=<id>/variant=0/lineage_seed=0/<path>``,
+    where ``experiment_id`` is a DOTTED spec id. Time coords live on the root
+    (``_xarray_time_ds`` accepts that)."""
+    import numpy as np
+    import xarray as xr
+
+    store_path = str(tmp_path / "hive.zarr")
+    exp = "viva_genesis.composites.metabolite_exchange_community.metabolite_exchange_community__1__abc"
+    root_ds = xr.Dataset(
+        data_vars={"time_gen=1": (["emitstep_gen=1"], np.array([0.0, 5.0], dtype=np.float32))},
+        coords={"emitstep_gen=1": np.array([0, 1], dtype=np.uint32)},
+    )
+    child_ds = xr.Dataset(data_vars={
+        "generation=1": (["emitstep_gen=1"], np.array([4.0e-22, 4.005e-22], dtype=np.float64)),
+    })
+    node = f"/experiment_id={exp}/variant=0/lineage_seed=0/exchange/cross_lineage_flux_total"
+    dt = xr.DataTree.from_dict({"/": root_ds, node: child_ds})
+    dt.to_zarr(store_path)
+    return store_path, exp
+
+
+@_xarray_skip
+def test_xarray_strips_dotted_hive_prefix(tmp_path):
+    """Real stores nest observables under hive coords whose ``experiment_id`` is a
+    dotted spec id. ``observables()`` must expose the LEAF emit path (not the
+    coordinate-prefixed name, and not split on the id's internal dots), and
+    ``series(leaf)`` must resolve it — mirroring the parquet reader, which strips
+    its id columns."""
+    store, _exp = _make_xarray_hive(tmp_path)
+    r = RunReader.open(store)
+    assert "exchange.cross_lineage_flux_total" in r.observables()
+    s = r.series("exchange.cross_lineage_flux_total")
+    assert s["value"].to_list()[-1] == pytest.approx(4.005e-22, rel=1e-3)
+    # studies/derivations declare paths slash-form; series() accepts both.
+    s_slash = r.series("exchange/cross_lineage_flux_total")
+    assert s_slash["value"].to_list()[-1] == pytest.approx(4.005e-22, rel=1e-3)
+
+
 # ============================================================================
 # Task 5: Export + by_generation + cross-backend equivalence
 # ============================================================================
