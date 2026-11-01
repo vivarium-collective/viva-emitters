@@ -89,5 +89,9 @@ try:
         IdNotInCatalog,
         CatalogUnavailable,
     )
+    from viva_emitters.measure_resolver import (  # noqa: F401
+        grade_bare_string_measure,
+        resolve_measure_fn,
+    )
 except ImportError:
     pass  # polars not installed (unlikely — it's a base dep)

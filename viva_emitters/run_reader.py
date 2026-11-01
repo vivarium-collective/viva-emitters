@@ -410,6 +410,58 @@ class RunReader:
                     break
         return out
 
+    def rows(self, observables: list[str] | None = None) -> list[dict]:
+        """Return the run as per-tick records across observables.
+
+        THE canonical per-step accessor: one dict per tick carrying
+        ``generation``/``time``/``abs_time`` plus each scalar observable's value
+        under its own id. This is the single representation a composite-module
+        observable function consumes — i.e. the M-track ``measure: <name>``
+        convention where ``<name>(rows) -> float`` is computed from the raw
+        trajectory. Grading through this accessor (see
+        :mod:`viva_emitters.measure_resolver`) means the workbench grading path
+        and the engine's ``evaluate_test`` build ``rows`` identically, so a study
+        grades byte-identically either side — no third "rows" convention.
+
+        Built on :py:meth:`series` (one scalar column per observable, aligned on
+        the ``(generation, time, abs_time)`` tick key), so it is backend-agnostic
+        across parquet / sqlite / xarray. Non-scalar (list/array-typed)
+        observables — which :py:meth:`series` cannot cast to a numeric column —
+        are skipped (a follow-on can add an array-aware accessor if a measure
+        needs them).
+
+        Args:
+            observables: Observable ids to include (default: all available).
+
+        Returns:
+            List of dicts, one per tick, ordered by ``(generation, time)``.
+            Empty list when no scalar observable is readable.
+        """
+        key = ["generation", "time", "abs_time"]
+        obs = observables if observables is not None else self.observables()
+        frames: dict[str, pl.DataFrame] = {}
+        for name in obs:
+            try:
+                df = self.series(name)
+            except Exception:  # noqa: BLE001 — skip non-scalar / unreadable observables
+                continue
+            if df is None or not {"value", *key}.issubset(set(df.columns)):
+                continue
+            frames[name] = df.select([*key, pl.col("value").alias(name)])
+        if not frames:
+            return []
+        # Key skeleton = union of ticks across observables (they share ticks in
+        # the common case; the union + left-join stays correct if one lags a tick).
+        skeleton = (
+            pl.concat([f.select(key) for f in frames.values()])
+            .unique()
+            .sort(["generation", "time"])
+        )
+        out_df = skeleton
+        for name, f in frames.items():
+            out_df = out_df.join(f, on=key, how="left")
+        return out_df.to_dicts()
+
     # ------------------------------------------------------------------
     # SQLite backend
     # ------------------------------------------------------------------
