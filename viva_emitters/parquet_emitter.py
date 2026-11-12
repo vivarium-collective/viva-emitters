@@ -1234,6 +1234,29 @@ class ParquetEmitter(Emitter):
             return None
         return {"column_units": json.dumps(self.column_units)}
 
+    def _ensure_live_executor(self) -> None:
+        """Re-arm the background write executor after a prior ``close()``.
+
+        The process-bigraph lifecycle can reuse a single emitter instance
+        across generation boundaries: ``close()`` runs at a generation
+        boundary, then a *later* generation calls ``update()`` again on the
+        SAME instance. ``close()`` (and the defensive ``__del__``) shut the
+        ``ThreadPoolExecutor`` down, so the next ``executor.submit(...)`` would
+        raise ``RuntimeError: cannot schedule new futures after shutdown``
+        (viva-emitters#54). When the emitter was closed, build a fresh executor
+        and clear ``_closed`` — so emitting resumes AND a subsequent
+        ``close()`` (whose ``if self._closed: return`` guard would otherwise
+        swallow it) runs again to flush the new generation's rows.
+
+        Cheap (a flag check) on the hot path when the emitter is already open.
+        """
+        if not self._closed:
+            return
+        self.executor = (
+            ThreadPoolExecutor(1) if self.threaded else BlockingExecutor()
+        )
+        self._closed = False
+
     def update(self, state: dict[str, Any]) -> dict:
         """Buffer one history row; flush to parquet when ``batch_size`` reached.
 
@@ -1252,7 +1275,11 @@ class ParquetEmitter(Emitter):
           across rows via :py:func:`union_pl_dtypes`. ``dtype_overrides``
           provide a ``force_inner`` hint so e.g. all-null prefixes don't
           collapse to ``pl.Null``.
+
+        Survives generation boundaries: if a prior ``close()`` shut the write
+        executor down, re-arm it before buffering this tick (viva-emitters#54).
         """
+        self._ensure_live_executor()
         flat = flatten_dict(state, separator=self.flatten_separator)
         flat = _split_structured_arrays(flat)
         # Unit-bearing leaves (pint.Quantity on a quantity[...] port) are numpy
@@ -1462,6 +1489,16 @@ class ParquetEmitter(Emitter):
             self._history_metadata(),
         )
         self.buffered_emits = {}
+        # Realign the batch counter to the next batch boundary. ``emit_idx`` is
+        # ``num_emits % batch_size``, so if emitting resumes after this partial
+        # flush — a later generation reusing this instance (viva-emitters#54),
+        # or an ``update()`` after a mid-run ``query()`` — the leftover slots of
+        # the partial batch just written would otherwise be re-filled, emitting
+        # a phantom null-padded row. Rounding up starts the next emit cleanly at
+        # index 0. Filenames stay unique: the count only ever increases (the
+        # skipped integers are simply never used as ``{num_emits}.pq`` names),
+        # and this runs AFTER ``outfile`` is built so this flush keeps its name.
+        self.num_emits += self.batch_size - rows_in_batch
 
     def close(self, success: bool = False) -> None:
         """Flush remaining buffer; write success sentinel when partitioned + success."""
