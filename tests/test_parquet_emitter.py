@@ -513,6 +513,45 @@ class TestParquetEmitterIntegration:
         assert df_sorted["value"].to_list() == [10, 20, 30]
         assert df_sorted["ratio"].to_list() == [0.5, 0.75, 1.0]
 
+    def test_update_after_close_rearms_executor(self, temp_dir, core):
+        """The emitter must survive a close()/update() across a generation
+        boundary. The pbg lifecycle reuses one emitter instance across
+        generations: close() runs at the boundary (shutting the threaded
+        write executor down), then a later generation calls update() again on
+        the SAME instance. Before the fix that raised
+        ``RuntimeError: cannot schedule new futures after shutdown``
+        (viva-emitters#54). After: update() re-arms the executor, and a second
+        close() flushes the new generation's rows.
+        """
+        emitter = ParquetEmitter(
+            config={
+                "out_dir": temp_dir,
+                "batch_size": 2,
+                "threaded": True,  # the executor-shutdown path (the bug)
+                "metadata": {"experiment_id": "regen"},
+            },
+            core=core,
+        )
+        emitter.last_batch_future.result()
+
+        # Generation 0: emit past a batch boundary, then close (shuts executor).
+        emitter.update({"time": 1.0, "value": 10})
+        emitter.update({"time": 2.0, "value": 20})
+        emitter.update({"time": 3.0, "value": 30})
+        emitter.close(success=False)
+        assert emitter._closed is True
+
+        # Generation 1 on the SAME instance: this is where the RuntimeError hit.
+        emitter.update({"time": 4.0, "value": 40})
+        emitter.update({"time": 5.0, "value": 50})
+        assert emitter._closed is False  # re-armed by update()
+        emitter.close(success=False)
+
+        # Both generations' rows are durable — nothing was lost at the boundary.
+        df = emitter.query().sort("time")
+        assert df["time"].to_list() == [1.0, 2.0, 3.0, 4.0, 5.0]
+        assert df["value"].to_list() == [10, 20, 30, 40, 50]
+
     def test_drop_shape_varying_column_does_not_crash(self, temp_dir, core):
         """A column that is a scalar at one tick and a length-N array at another
         cannot live in a single parquet column. The emitter DROPS it (with a

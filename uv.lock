@@ -1558,7 +1558,7 @@ wheels = [
 
 [[package]]
 name = "viva-emitters"
-version = "0.4.3"
+version = "0.4.4"
 source = { editable = "." }
 dependencies = [
     { name = "bigraph-schema" },
@@ -1588,6 +1588,9 @@ parquet = [
     { name = "pyarrow" },
     { name = "tqdm" },
 ]
+parquet-lite = [
+    { name = "pyarrow" },
+]
 xarray = [
     { name = "bottleneck" },
     { name = "fsspec" },
@@ -1616,6 +1619,7 @@ requires-dist = [
     { name = "process-bigraph", specifier = ">=1.4.12" },
     { name = "pyarrow", marker = "extra == 'dev'" },
     { name = "pyarrow", marker = "extra == 'parquet'" },
+    { name = "pyarrow", marker = "extra == 'parquet-lite'" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "tqdm", marker = "extra == 'dev'" },
     { name = "tqdm", marker = "extra == 'parquet'" },
@@ -1628,7 +1632,7 @@ requires-dist = [
     { name = "zarrs", marker = "extra == 'dev'", specifier = ">=0.2" },
     { name = "zarrs", marker = "extra == 'xarray'", specifier = ">=0.2" },
 ]
-provides-extras = ["sqlite", "parquet", "xarray", "dev"]
+provides-extras = ["sqlite", "parquet", "parquet-lite", "xarray", "dev"]
 
 [[package]]
 name = "xarray"
