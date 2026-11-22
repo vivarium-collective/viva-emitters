@@ -320,17 +320,24 @@ class RunReader:
         self._kind: str = ref.kind or _detect_kind(ref.store)
 
     @classmethod
-    def open(cls, store: str | RunRef, kind: str | None = None) -> "RunReader":
+    def open(cls, store: str | RunRef, kind: str | None = None,
+             simulation_id: str | None = None) -> "RunReader":
         """Open a run store and return a :py:class:`RunReader`.
 
         Args:
             store: Path to the run store, or a :py:class:`RunRef`.
             kind:  Force backend — ``"sqlite"``, ``"parquet"``, or
                    ``"xarray"``.  Auto-detected if ``None``.
+            simulation_id: Address a SINGLE run inside a shared multi-run
+                   SQLite ``.db``. When set, only ``history`` rows with this
+                   ``simulation_id`` are read, so a store that holds several
+                   runs returns just this one instead of conflating them. A
+                   ``RunRef`` passed as ``store`` already carries its own, so
+                   this argument is ignored in that case.
         """
         if isinstance(store, RunRef):
             return cls(store)
-        return cls(RunRef(store=str(store), kind=kind))
+        return cls(RunRef(store=str(store), kind=kind, simulation_id=simulation_id))
 
     @property
     def kind(self) -> str:

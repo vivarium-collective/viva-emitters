@@ -410,3 +410,20 @@ def test_cross_backend_equivalence(tmp_path):
     assert sq_s["generation"].to_list() == pq_s["generation"].to_list()
     assert sq_s["time"].to_list() == pytest.approx(pq_s["time"].to_list(), abs=1e-6)
     assert sq_s["value"].to_list() == pytest.approx(pq_s["value"].to_list(), abs=1e-6)
+
+
+def test_sqlite_open_with_simulation_id_selects_one_run(tmp_path):
+    """open(..., simulation_id=) addresses a SINGLE run inside a shared multi-run .db,
+    instead of conflating every simulation's rows (the RunReader run-selection follow-up)."""
+    db = str(_make_sqlite(tmp_path))
+    # the shared DB holds two simulations (sim_gen=1, sim_gen=2)
+    assert RunReader.open(db).generations() == [1, 2]
+    # open() can now restrict to one of them
+    r1 = RunReader.open(db, simulation_id="sim_gen=1")
+    assert r1.generations() == [1]
+    s = r1.series("listeners.mass.cell_mass")
+    assert s["generation"].to_list() == [1, 1]
+    assert s["value"].to_list() == [100.0, 150.0]
+    # a RunRef passed as store keeps its own simulation_id (the open arg is ignored)
+    r2 = RunReader.open(RunRef(store=db, simulation_id="sim_gen=2"))
+    assert r2.generations() == [2]
